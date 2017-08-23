@@ -1,0 +1,99 @@
+---
+title: "RF_0vsABC_model"
+author: "Christopher Morano"
+date: "August 23, 2017"
+output: pdf_document
+---
+
+This file is to rerun a model that seemed impossibly good.  I wasn't able to previously acheive these scores, so I'm worried that I must have accidentally used test data in my model (but I'm pretty sure I didn't).  So let's run it again and see what happens: 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(randomForest)
+library(caret)
+library(lime)
+```
+
+Let's read in the data, for which I have already gathered the features.
+
+```{r}
+#reading in the data:
+Aug21_med_data <- read_csv('../data/Aug21_summarized_1week.csv')
+
+Aug21_med_data
+```
+
+Let's select only the patients that had more that one result.  
+
+```{r}
+Aug21_med_2res <- Aug21_med_data %>% 
+  filter(num_of_results > 1)
+```
+
+And let's run on first model on 0 vs. A, B & C.
+
+```{r}
+#copy the data, so as not to affect the original:
+Aug21_0vsABC_data <- Aug21_med_2res
+
+#convert A, B & C to ABC:
+Aug21_0vsABC_data$Result_2016[Aug21_0vsABC_data$Result_2016 %in% c('A', 'B', 'C')] <- 'ABC'
+Aug21_0vsABC_data$Result_2016 <- factor(Aug21_0vsABC_data$Result_2016)
+
+#Let's get a training and test set:
+#setting a seed, and shuffling the data:
+set.seed(132)
+Aug21_0vsABC_shuf <- sample_frac(Aug21_0vsABC_data)
+
+Aug21_0vsABC_shuf
+```
+
+```{r}
+#We have 1040 data points, so let's take 80% of those (832) for the training set, and the remaining 208 for the test set.
+Aug21_train <- Aug21_0vsABC_shuf[1:832,]
+Aug21_test  <- Aug21_0vsABC_shuf[833:1040,]
+
+#The features we are going to use are:
+#   min_result, mean_result, max_result, var_result, diff_of_last_and_max, & diff_of_last_and_min.
+Aug21_train_X <- Aug21_train %>% 
+  select(min_result:var_result, diff_of_last_and_max, diff_of_last_and_min)
+Aug21_train_y <- Aug21_train$Result_2016
+
+Aug21_test_X <- Aug21_test %>% 
+  select(min_result:var_result, diff_of_last_and_max, diff_of_last_and_min)
+Aug21_test_y <- Aug21_test$Result_2016
+
+Aug21_test
+```
+
+So far, I don't see how I could have mixed these sets up.  So let's run the RF model:
+
+```{r}
+Aug21_0vsABC.rf <- randomForest(x=Aug21_train_X, y=Aug21_train_y, maxnodes = 150, type='prob', importance=TRUE, proximity = TRUE, keep.forest=TRUE)
+
+Aug21_0vsABC.rf
+```
+
+That's a great split on the training data.  Our training error is 3.73%, and sensitivity of the test (with ABC being the 'positive class') is almost 95% (458 of 484).  That's very good.  But the important question is how well does this model do on the test data?
+
+```{r}
+Aug21_pred <- predict(Aug21_0vsABC.rf, Aug21_test_X)
+confusionMatrix(Aug21_pred, Aug21_test_y)
+```
+
+Those results are great, and I don't know why I wasn't able to get those before.  I suspect that it might be because I reversed the signs on the variable diff_of_last_and_max.  (They were previously calculated as negative.)  With this model, I get 95% accuracy and, more imporantly, sensitivity of 93.75% (because my 'positive class' is actually ABC).  That's very good so let's use this model.  And then let's explore models to differentiate A, B & C.  
+
+Let's visualize the results using a new package called `lime` from https://github.com/thomasp85/lime.  (A good tutorial can also be found at: https://shiring.github.io/machine_learning/2017/04/23/lime):
+
+```{r}
+Aug21_prob <- predict(Aug21_0vsABC.rf, Aug21_test_X, 'prob')
+explain <- lime(as.data.frame(Aug21_prob), Aug21_lime_model.rf)
+
+#not working yet:
+#explanation <- explain(Aug21_test_X, n_labels = 2, n_features = 5)
+
+```
+
+
+
