@@ -70,30 +70,18 @@ Aug21_test
 So far, I don't see how I could have mixed these sets up.  So let's run the RF model:
 
 ```{r}
+set.seed(137)
 Aug21_0vsABC.rf <- randomForest(x=Aug21_train_X, y=Aug21_train_y, maxnodes = 150, type='prob', importance=TRUE, proximity = TRUE, keep.forest=TRUE)
 
 Aug21_0vsABC.rf
 ```
 
-That's a great split on the training data.  Our training error is 3.73%, and sensitivity of the test (with ABC being the 'positive class') is almost 95% (458 of 484).  That's very good.  But the important question is how well does this model do on the test data?
+That's a great split on the training data.  Our training error is 3.73%, and sensitivity of the test (with ABC being the 'positive class') is almost 94% (454 of 484).  That's very good.  But the important question is how well does this model do on the test data?
 
 ```{r}
 Aug21_pred <- predict(Aug21_0vsABC.rf, Aug21_test_X)
 confusionMatrix(Aug21_pred, Aug21_test_y)
 ```
 
-Those results are great, and I don't know why I wasn't able to get those before.  I suspect that it might be because I reversed the signs on the variable diff_of_last_and_max.  (They were previously calculated as negative.)  With this model, I get 95% accuracy and, more imporantly, sensitivity of 93.75% (because my 'positive class' is actually ABC).  That's very good so let's use this model.  And then let's explore models to differentiate A, B & C.  
-
-Let's visualize the results using a new package called `lime` from https://github.com/thomasp85/lime.  (A good tutorial can also be found at: https://shiring.github.io/machine_learning/2017/04/23/lime):
-
-```{r}
-Aug21_prob <- predict(Aug21_0vsABC.rf, Aug21_test_X, 'prob')
-explain <- lime(as.data.frame(Aug21_prob), Aug21_lime_model.rf)
-
-#not working yet:
-#explanation <- explain(Aug21_test_X, n_labels = 2, n_features = 5)
-
-```
-
-
+Those results are great, and I don't know why I wasn't able to get those before.  I suspect that it might be because I reversed the signs on the variable diff_of_last_and_max.  (They were previously calculated as negative.)  With this model, I get 95% accuracy and, more imporantly, sensitivity of 93% (listed above as 'specificity' because my 'positive class' is actually ABC).  That's very good so let's use this model.  And then I'll explore models to differentiate A, B & C.  
 
