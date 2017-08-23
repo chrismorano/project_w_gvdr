@@ -7,4 +7,4 @@ The goal of this project is to create an R Shiny dashboard for medical professio
 
 The models and Shiny app are currently being developed by Dr. Chris Morano under the supervision and guidance of Dr. Giulio Dalla Riva (https://github.com/gvdr).
 
-asd
+The dependencies for this project are: `R`, `tidyverse`, `caret`, `randomForest`, `lime`, and `Shiny`.
