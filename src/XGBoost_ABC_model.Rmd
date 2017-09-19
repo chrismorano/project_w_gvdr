@@ -1,0 +1,254 @@
+---
+title: "XGBoost for A vs B vs C"
+author: "Christopher Morano"
+date: "August 23, 2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(caret)
+library(xgboost)
+library(Matrix)
+library(lime)
+```
+
+We have a random forest model that acheives 95% accuracy classifying 0 vs. ABC.  Now let's see if we can use xgboost for multi-class classification for A vs. B vs. C.
+
+First let's load the data and only use results of A, B & C:
+
+```{r}
+#read in the data:
+Aug21_med_data <- read_csv('../data/Aug21_summarized_1week.csv')
+
+#filter for patients with two or more test results, where they were graded as A, B or C:
+Aug21_ABC_data <- Aug21_med_data %>% 
+  filter(num_of_results >1, Result_2016 %in% c('A', 'B', 'C'))
+
+#creating factors:
+Aug21_ABC_data$Result_2016 <- as.factor(Aug21_ABC_data$Result_2016)
+
+Aug21_ABC_data
+```
+
+Let's split the data into training and test sets.
+
+```{r}
+set.seed(31) #was 315
+Aug21_ABC_shuf <- sample_frac(Aug21_ABC_data, size = 1)
+
+#let's use about 80% of the data for training (475) and the remaining 121 patients as the test set:
+Aug21_ABC_train <- Aug21_ABC_shuf[0:475,]
+Aug21_ABC_test  <- Aug21_ABC_shuf[476:596,]
+
+table(Aug21_ABC_data$Result_2016)   #distribution: 229, 254, 113
+table(Aug21_ABC_train$Result_2016)  #182, 204, 89
+table(Aug21_ABC_test$Result_2016)   #47, 50, 24
+
+#the classes are quite evenly distributed between the sets.
+
+#selecting the features:
+Aug21_ABC_train_X <- Aug21_ABC_train %>% 
+  select(min_result:var_result, diff_of_last_and_max, diff_of_last_and_min)
+Aug21_ABC_train_y <- Aug21_ABC_train$Result_2016
+
+Aug21_ABC_test_X <- Aug21_ABC_test %>% 
+  select(min_result:var_result, diff_of_last_and_max, diff_of_last_and_min)
+Aug21_ABC_test_y <- Aug21_ABC_test$Result_2016
+
+#converting X's to matrices and y's to 0's, 1's & 2's (for A, B, and C, respectively):
+Aug21_ABC_train_X.xgb <- sparse.model.matrix(~.-1, data=Aug21_ABC_train_X)
+Aug21_ABC_test_X.xgb <- sparse.model.matrix(~.-1, data=Aug21_ABC_test_X)
+
+Aug21_ABC_train_y.xgb <- as.numeric(Aug21_ABC_train_y) -1
+Aug21_ABC_test_y.xgb <- as.numeric(Aug21_ABC_test_y) -1
+```
+
+
+The following code and process is modelled after the very useful tutorial posted at  https://github.com/rachar1/DataAnalysis/blob/master/xgboost_Classification.R.
+
+```{r}
+#setting the paramaters:
+param       = list("objective" = "multi:softmax", # multi class classification
+	            "num_class"= 3,  		# Number of classes in the dependent variable.
+              "eval_metric" = "merror",  	 # evaluation metric 
+              "max_depth" = 5,    		 # maximum depth of tree 
+              "eta" = 0.1,    			 # step size shrinkage 
+              "gamma" = 1.5,    			 # minimum loss reduction 
+              "subsample" = 0.5,    		 # part of data instances to grow tree 
+              "colsample_bytree" = 1, 		 # subsample ratio of columns when constructing each tree 
+              "min_child_weight" = 2  		 # minimum sum of instance weight needed in a child 
+              )
+```
+
+```{r}
+# Step 1: Run a Cross-Validation to identify the round with the minimum loss or error.
+set.seed(113)
+
+cv.nround = 100;  # Number of rounds. This can be set to a lower or higher value, if you wish, example: 150 or 250 or 300  
+bst.cv = xgb.cv(
+        param=param,
+	data = Aug21_ABC_train_X.xgb,
+	label = Aug21_ABC_train_y.xgb,
+	nfold = 5,
+	nrounds=cv.nround,
+	prediction=TRUE)
+
+#Find where the minimum logloss occurred
+min.loss.idx <-  which.min(bst.cv$evaluation_log$test_merror_mean)
+cat ("Minimum m-error occurred in round : ", min.loss.idx, "\n")
+```
+
+```{r}
+set.seed(1313)
+bst = xgboost(
+		param=param,
+		data = Aug21_ABC_train_X.xgb,
+		label = Aug21_ABC_train_y.xgb,
+		nrounds=50)
+
+#let's look at our training errors:
+ABC_train_pred <- predict(bst, Aug21_ABC_train_X.xgb)
+confusionMatrix(ABC_train_pred, Aug21_ABC_train_y.xgb)
+```
+
+That's quite good, but we might be overfitting.  Let's look at our test data:
+
+```{r}
+ABC_test_pred <- predict(bst, Aug21_ABC_test_X.xgb)
+confusionMatrix(ABC_test_pred, Aug21_ABC_test_y.xgb)
+```
+
+Right, so we are clearly overfitting in the model.  Let's run it again, but now getting probabilities, and then we can see how those probabilities compare to our results.  (Maybe we're predicting 1 and 2 with almost the same probability, but 1 wins because there are more 1's in the dataset?)
+
+```{r}
+#setting the paramaters:
+param       = list("objective" = "multi:softprob", # multi class classification
+	            "num_class"= 3,  		# Number of classes in the dependent variable.
+              "eval_metric" = "merror",  	 # evaluation metric 
+              "max_depth" = 20,    		 # maximum depth of tree 
+              "eta" = 0.1,    			 # step size shrinkage 
+              "gamma" = 1,    			 # minimum loss reduction 
+              "subsample" = 0.5,    		 # part of data instances to grow tree 
+              "colsample_bytree" = 1, 		 # subsample ratio of columns when constructing each tree 
+              "min_child_weight" = 2  		 # minimum sum of instance weight needed in a child 
+              )
+
+set.seed(1313)
+bst = xgboost(
+		param=param,
+		data = Aug21_ABC_train_X.xgb,
+		label = Aug21_ABC_train_y.xgb,
+		nrounds=350)
+
+ABC_test_prob <- predict(bst, Aug21_ABC_test_X.xgb)
+
+ABC_test_prob.df <- as_tibble(matrix(ABC_test_prob, ncol=3, byrow=TRUE))
+colnames(ABC_test_prob.df) <-  c("A", "B", "C")
+
+ABC_test_prob.df$Result <- Aug21_ABC_test$Result_2016
+ABC_test_prob.df$Result <- as.factor(ABC_test_prob.df$Result)
+
+ggplot() +
+  geom_boxplot(data=ABC_test_prob.df, aes(x=Result, y=C)) +
+  geom_jitter(data=ABC_test_prob.df, width=0.2, height=0, size=2.5, alpha=0.7, aes(x=Result, y=C, color=Result)) + 
+  labs(title='XGBoost Results: Predicting A vs. B. vs. C', x='Actual Result', y='Prob. of Being Labelled `C`')
+```
+
+These results are not promissing.  Hmm.  What happens if I just do A vs B?  Or A vs. BC?  And can I do randomForest for multiclass?
+
+We may need to use more features (such as age, BMI, bleeding, etc. ) to really separate C from A&B.  But let's try to separate A from B, and see where that leads us:
+
+```{r}
+#getting just A's and B's:
+Aug21_AB_shuf <- Aug21_ABC_shuf %>% 
+  filter(Result_2016 %in% c('A', 'B'))
+
+Aug21_AB_shuf
+#let's use about 80% of the data for training (385) and the remaining 98 patients as the test set:
+Aug21_AB_train <- Aug21_AB_shuf[0:385,]
+Aug21_AB_test  <- Aug21_AB_shuf[386:483,]
+
+table(Aug21_AB_shuf$Result_2016)   #distribution: 229, 254, 113
+table(Aug21_AB_train$Result_2016)  #182, 204, 89
+table(Aug21_AB_test$Result_2016)   #47, 50, 24
+
+#the classes are quite evenly distributed between the sets.
+
+#selecting the features:
+Aug21_AB_train_X <- Aug21_AB_train %>% 
+  select(min_result:var_result, diff_of_last_and_max, diff_of_last_and_min)
+Aug21_AB_train_y <- Aug21_AB_train$Result_2016
+Aug21_AB_train_y <- factor(as.character(Aug21_AB_train_y))
+
+Aug21_AB_test_X <- Aug21_AB_test %>% 
+  select(min_result:var_result, diff_of_last_and_max, diff_of_last_and_min)
+Aug21_AB_test_y <- Aug21_AB_test$Result_2016
+Aug21_AB_test_y <- factor(as.character(Aug21_AB_test_y))
+
+#converting X's to matrices and y's to 0's, 1's & 2's (for A, B, and C, respectively):
+Aug21_AB_train_X.xgb <- sparse.model.matrix(~.-1, data=Aug21_AB_train_X)
+Aug21_AB_test_X.xgb <- sparse.model.matrix(~.-1, data=Aug21_AB_test_X)
+
+Aug21_AB_train_y.xgb <- as.numeric(Aug21_AB_train_y) -1
+Aug21_AB_test_y.xgb <- as.numeric(Aug21_AB_test_y) -1
+```
+
+```{r}
+param       = list("objective" = "binary:logistic", # multi class classification
+	       #     "num_class"= 3,  		# Number of classes in the dependent variable.
+              "eval_metric" = "auc",  	 # evaluation metric 
+              "max_depth" = 50,    		 # maximum depth of tree 
+              "eta" = 0.1,    			 # step size shrinkage 
+              "gamma" = 1,    			 # minimum loss reduction 
+              "subsample" = 0.5,    		 # part of data instances to grow tree 
+              "colsample_bytree" = 1, 		 # subsample ratio of columns when constructing each tree 
+              "min_child_weight" = 2  		 # minimum sum of instance weight needed in a child 
+              )
+
+bst = xgboost(
+		param=param,
+		data = Aug21_AB_train_X.xgb,
+		label = Aug21_AB_train_y.xgb,
+		nrounds=150)
+
+#let's look at our training errors:
+AB_train_pred <- predict(bst, Aug21_AB_train_X.xgb)
+confusionMatrix(round(AB_train_pred), Aug21_AB_train_y.xgb)
+```
+
+```{r}
+#let's look at our testing errors:
+AB_test_pred <- predict(bst, Aug21_AB_test_X.xgb)
+confusionMatrix(round(AB_test_pred), Aug21_AB_test_y.xgb)
+
+```
+
+Or let's try a RF model:
+
+```{r}
+set.seed(137)
+Aug21_AvsB.rf <- randomForest(x=Aug21_AB_train_X, y=Aug21_AB_train_y, maxnodes = 250, type='prob', importance=TRUE, proximity = TRUE, keep.forest=TRUE)
+
+Aug21_AvsB.rf
+
+```
+
+Tom from meetup: developed XGBoost for R
+
+```{r}
+
+bst
+```
+
+```{r}
+#XGBoost is scale invariant!  Good!  
+?xgb.importance()
+
+model_imp <- xgb.importance(colnames(Aug21_AB_train_X.xgb), model=bst)
+xgb.plot.importance(model_imp)
+
+```
+
+

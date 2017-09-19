@@ -1,0 +1,951 @@
+---
+title: "Getting back to work on the med data"
+author: "Christopher Morano"
+date: "September 11, 2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(randomForest)
+library(xgboost)
+library(caret)
+library(lime)
+library(extrafont)
+library(Amelia) #to visualize missing data
+library(printr)
+```
+
+```{r}
+#Loading the Data:
+Aug_med <- read_csv('../data/Med_data_Aug21.csv', col_types=list("Day4"=col_character(), 
+                                                                 "Day6"=col_character(),
+                                                                 "Day7"=col_character()))
+#Let's take the first 21 days of medical results:
+Aug_med_day21 <- select(Aug_med, ID:Day21)
+
+#We need to clean up columns Day4, 6, & 7, but this would be easier when I make the data tall.
+```
+
+```{r, fig.height=5, fig.width=10}
+missmap(Aug_med_day21)
+```
+
+Let's save a bunch of versions of this data so we can easily run models on 0 vs. ABC, A vs. B vs. C, A vs. BC, AB vs. C, and 0AB vs. C.  That's five versions I can think of right now.  Let's start with those.
+
+```{r}
+#Let's get our five data sets:
+
+#Aug_med_0vsABC
+#___________________
+
+Aug_med_0vsABC <- Aug_med_day21
+Aug_med_0vsABC[Aug_med_0vsABC$Result2016 %in% c("A", "B", "C"),]$Result2016 <- "ABC"
+Aug_med_0vsABC$Result2016 <- factor(Aug_med_0vsABC$Result2016)
+
+#Aug_med_0ABvsC
+#___________________
+
+Aug_med_0ABvsC <- Aug_med_day21
+Aug_med_0ABvsC[Aug_med_0ABvsC$Result2016 %in% c("0", "A", "B"),]$Result2016 <- "0AB"
+Aug_med_0ABvsC$Result2016 <- factor(Aug_med_0ABvsC$Result2016)
+
+#Aug_med_AvsBvsC
+#___________________
+
+Aug_med_AvsBvsC <- filter(Aug_med_day21, Result2016 %in% c("A", "B", "C"))
+Aug_med_AvsBvsC$Result2016 <- factor(Aug_med_AvsBvsC$Result2016)
+
+#Aug_med_ABvsC
+#___________________
+
+Aug_med_ABvsC <- filter(Aug_med_day21, Result2016 %in% c("A", "B", "C"))
+Aug_med_ABvsC[Aug_med_ABvsC$Result2016 %in% c("A", "B"),]$Result2016 <- "AB"
+Aug_med_ABvsC$Result2016 <- factor(Aug_med_ABvsC$Result2016)
+
+#Aug_med_AvsBC
+#___________________
+
+Aug_med_AvsBC <- filter(Aug_med_day21, Result2016 %in% c("A", "B", "C"))
+Aug_med_AvsBC[Aug_med_AvsBC$Result2016 %in% c("B", "C"),]$Result2016 <- "BC"
+Aug_med_AvsBC$Result2016 <- factor(Aug_med_AvsBC$Result2016)
+
+#table(Aug_med_AvsBC$Result2016)
+```
+
+Let's summarize and see how far we can get with just the summary of 21 days.  We can shorten it later, but I'm wondering if having 3 weeks of data makes a big difference (compared to just 1 week).
+
+
+```{r}
+#Tall: 0 vs. ABC
+Aug_med_0vsABC.tall.21 <- gather(Aug_med_0vsABC, day, result, Day1:Day21) %>% 
+  filter(!is.na(result)) %>% 
+  arrange(ID)
+
+Aug_med_0vsABC.tall.7 <- gather(select(Aug_med_0vsABC, ID:Day7), day, result, Day1:Day7) %>% 
+  filter(!is.na(result)) %>% 
+  arrange(ID)
+```
+
+```{r}
+#Tall: 0AB vs. C
+Aug_med_0ABvsC.tall.21 <- gather(Aug_med_0ABvsC, day, result, Day1:Day21) %>% 
+  filter(!is.na(result)) %>% 
+  arrange(ID)
+
+Aug_med_0ABvsC.tall.7 <- gather(select(Aug_med_0ABvsC, ID:Day7), day, result, Day1:Day7) %>% 
+  filter(!is.na(result)) %>% 
+  arrange(ID)
+```
+
+```{r}
+#Tall: 0AB vs. C
+Aug_med_AvsBvsC.tall.21 <- gather(Aug_med_AvsBvsC, day, result, Day1:Day21) %>% 
+  filter(!is.na(result)) %>% 
+  arrange(ID)
+
+Aug_med_AvsBvsC.tall.7 <- gather(select(Aug_med_AvsBvsC, ID:Day7), day, result, Day1:Day7) %>% 
+  filter(!is.na(result)) %>% 
+  arrange(ID)
+```
+
+```{r}
+#Tall: AB vs. C
+Aug_med_ABvsC.tall.21 <- gather(Aug_med_ABvsC, day, result, Day1:Day21) %>% 
+  filter(!is.na(result)) %>% 
+  arrange(ID)
+
+Aug_med_ABvsC.tall.7 <- gather(select(Aug_med_ABvsC, ID:Day7), day, result, Day1:Day7) %>% 
+  filter(!is.na(result)) %>% 
+  arrange(ID)
+```
+
+```{r}
+#Tall: A vs. BC
+Aug_med_AvsBC.tall.21 <- gather(Aug_med_AvsBC, day, result, Day1:Day21) %>% 
+  filter(!is.na(result)) %>% 
+  arrange(ID)
+
+Aug_med_AvsBC.tall.7 <- gather(select(Aug_med_AvsBC, ID:Day7), day, result, Day1:Day7) %>% 
+  filter(!is.na(result)) %>% 
+  arrange(ID)
+```
+
+```{r}
+#cleaning up all of the data!!!:
+#first: convert `day` column to ordered factors:
+Aug_med_0vsABC.tall.21$day <- ordered(Aug_med_0vsABC.tall.21$day)
+Aug_med_0ABvsC.tall.21$day <- ordered(Aug_med_0ABvsC.tall.21$day)
+Aug_med_AvsBvsC.tall.21$day <- ordered(Aug_med_AvsBvsC.tall.21$day)
+Aug_med_AvsBC.tall.21$day <- ordered(Aug_med_AvsBC.tall.21$day)
+Aug_med_ABvsC.tall.21$day <- ordered(Aug_med_ABvsC.tall.21$day)
+Aug_med_0vsABC.tall.7$day <- ordered(Aug_med_0vsABC.tall.7$day)
+Aug_med_0ABvsC.tall.7$day <- ordered(Aug_med_0ABvsC.tall.7$day)
+Aug_med_AvsBvsC.tall.7$day <- ordered(Aug_med_AvsBvsC.tall.7$day)
+Aug_med_AvsBC.tall.7$day <- ordered(Aug_med_AvsBC.tall.7$day)
+Aug_med_ABvsC.tall.7$day <- ordered(Aug_med_ABvsC.tall.7$day)
+
+#changing the values of `<10` and `>30000`:
+Aug_med_0vsABC.tall.21$result[Aug_med_0vsABC.tall.21$result == '>30000'] <- '30001'
+Aug_med_0ABvsC.tall.21$result[Aug_med_0ABvsC.tall.21$result == '>30000'] <- '30001'
+Aug_med_AvsBvsC.tall.21$result[Aug_med_AvsBvsC.tall.21$result == '>30000'] <- '30001'
+Aug_med_AvsBC.tall.21$result[Aug_med_AvsBC.tall.21$result == '>30000'] <- '30001'
+Aug_med_ABvsC.tall.21$result[Aug_med_ABvsC.tall.21$result == '>30000'] <- '30001'
+Aug_med_0vsABC.tall.7$result[Aug_med_0vsABC.tall.7$result == '>30000'] <- '30001'
+Aug_med_0ABvsC.tall.7$result[Aug_med_0ABvsC.tall.7$result == '>30000'] <- '30001'
+Aug_med_AvsBvsC.tall.7$result[Aug_med_AvsBvsC.tall.7$result == '>30000'] <- '30001'
+Aug_med_AvsBC.tall.7$result[Aug_med_AvsBC.tall.7$result == '>30000'] <- '30001'
+Aug_med_ABvsC.tall.7$result[Aug_med_ABvsC.tall.7$result == '>30000'] <- '30001'
+
+set.seed(1313)
+random10 <- round(runif(10, 1, 9))
+random12 <- round(runif(12, 1, 9))
+
+Aug_med_0vsABC.tall.21$result[Aug_med_0vsABC.tall.21$result == '<10'] <- random12
+Aug_med_0ABvsC.tall.21$result[Aug_med_0ABvsC.tall.21$result == '<10'] <- random12
+Aug_med_AvsBvsC.tall.21$result[Aug_med_AvsBvsC.tall.21$result == '<10'] <- random10
+Aug_med_AvsBC.tall.21$result[Aug_med_AvsBC.tall.21$result == '<10'] <- random10
+Aug_med_ABvsC.tall.21$result[Aug_med_ABvsC.tall.21$result == '<10'] <- random10
+Aug_med_0vsABC.tall.7$result[Aug_med_0vsABC.tall.7$result == '<10'] <- random12
+Aug_med_0ABvsC.tall.7$result[Aug_med_0ABvsC.tall.7$result == '<10'] <- random12
+Aug_med_AvsBvsC.tall.7$result[Aug_med_AvsBvsC.tall.7$result == '<10'] <- random10
+Aug_med_AvsBC.tall.7$result[Aug_med_AvsBC.tall.7$result == '<10'] <- random10
+Aug_med_ABvsC.tall.7$result[Aug_med_ABvsC.tall.7$result == '<10'] <- random10
+
+#converting them all to numeric:
+Aug_med_0vsABC.tall.21$result <- as.numeric(Aug_med_0vsABC.tall.21$result)
+Aug_med_0ABvsC.tall.21$result <- as.numeric(Aug_med_0ABvsC.tall.21$result)
+Aug_med_AvsBvsC.tall.21$result <- as.numeric(Aug_med_AvsBvsC.tall.21$result)
+Aug_med_AvsBC.tall.21$result <- as.numeric(Aug_med_AvsBC.tall.21$result)
+Aug_med_ABvsC.tall.21$result <- as.numeric(Aug_med_ABvsC.tall.21$result)
+Aug_med_0vsABC.tall.7$result <- as.numeric(Aug_med_0vsABC.tall.7$result)
+Aug_med_0ABvsC.tall.7$result <- as.numeric(Aug_med_0ABvsC.tall.7$result)
+Aug_med_AvsBvsC.tall.7$result <- as.numeric(Aug_med_AvsBvsC.tall.7$result)
+Aug_med_AvsBC.tall.7$result <- as.numeric(Aug_med_AvsBC.tall.7$result)
+Aug_med_ABvsC.tall.7$result <- as.numeric(Aug_med_ABvsC.tall.7$result)
+
+Aug_med_0vsABC.tall.21
+#I could have done this with a loop...  Oh well...
+```
+
+```{r}
+#3-week data:
+#Aug_med_0vsABC.sum.21
+Aug_med_0vsABC.sum.21 <- Aug_med_0vsABC.tall.21 %>% 
+  group_by(ID) %>% 
+  summarize(Gender=max(Gender),
+            Age=max(Age),
+            BMI=max(BMI),
+            AsaScore=max(AsaScore),
+            TexturePancreas=max(TexturePancreas),
+            MPD_Diameter=max(MPD_Diameter),
+            DGE_YesOrNot=max(DGE_YesOrNot),
+            POPF=max(POPF),
+            Bleeding=max(Bleeding),
+            Reoperation=max(Reoperation),
+            EndoscopicReintervention=max(EndoscopicReintervention),
+            RadiologicalReintervention=max(RadiologicalReintervention),
+            OrganFailure=max(OrganFailure),
+            InHospitalMortality=max(InHospitalMortality),
+            HospitalReadmission=max(HospitalReadmission),
+            HospitalStay=max(HospitalStay),
+            POD_DrainRemoval=max(POD_DrainRemoval),
+            num_of_results=n(),
+            min_result=min(result),
+            mean_result=mean(result),
+            max_result=max(result),
+            var_result=var(result),
+            last_result=day[num_of_results],
+            diff_of_last_and_max=ifelse(num_of_results==1, NA, max_result-result[num_of_results]),
+            diff_of_last_and_min=ifelse(num_of_results==1, NA, result[num_of_results]-min_result),
+            Result_2016=factor(names(which.max(table(Result2016)))))
+
+#Aug_med_0ABvsC.sum.21
+Aug_med_0ABvsC.sum.21 <- Aug_med_0ABvsC.tall.21 %>% 
+  group_by(ID) %>% 
+  summarize(Gender=max(Gender),
+            Age=max(Age),
+            BMI=max(BMI),
+            AsaScore=max(AsaScore),
+            TexturePancreas=max(TexturePancreas),
+            MPD_Diameter=max(MPD_Diameter),
+            DGE_YesOrNot=max(DGE_YesOrNot),
+            POPF=max(POPF),
+            Bleeding=max(Bleeding),
+            Reoperation=max(Reoperation),
+            EndoscopicReintervention=max(EndoscopicReintervention),
+            RadiologicalReintervention=max(RadiologicalReintervention),
+            OrganFailure=max(OrganFailure),
+            InHospitalMortality=max(InHospitalMortality),
+            HospitalReadmission=max(HospitalReadmission),
+            HospitalStay=max(HospitalStay),
+            POD_DrainRemoval=max(POD_DrainRemoval),
+            num_of_results=n(),
+            min_result=min(result),
+            mean_result=mean(result),
+            max_result=max(result),
+            var_result=var(result),
+            last_result=day[num_of_results],
+            diff_of_last_and_max=ifelse(num_of_results==1, NA, max_result-result[num_of_results]),
+            diff_of_last_and_min=ifelse(num_of_results==1, NA, result[num_of_results]-min_result),
+            Result_2016=factor(names(which.max(table(Result2016)))))
+
+#Aug_med_AvsBvsC.sum.21
+Aug_med_AvsBvsC.sum.21 <- Aug_med_AvsBvsC.tall.21 %>% 
+  group_by(ID) %>% 
+  summarize(Gender=max(Gender),
+            Age=max(Age),
+            BMI=max(BMI),
+            AsaScore=max(AsaScore),
+            TexturePancreas=max(TexturePancreas),
+            MPD_Diameter=max(MPD_Diameter),
+            DGE_YesOrNot=max(DGE_YesOrNot),
+            POPF=max(POPF),
+            Bleeding=max(Bleeding),
+            Reoperation=max(Reoperation),
+            EndoscopicReintervention=max(EndoscopicReintervention),
+            RadiologicalReintervention=max(RadiologicalReintervention),
+            OrganFailure=max(OrganFailure),
+            InHospitalMortality=max(InHospitalMortality),
+            HospitalReadmission=max(HospitalReadmission),
+            HospitalStay=max(HospitalStay),
+            POD_DrainRemoval=max(POD_DrainRemoval),
+            num_of_results=n(),
+            min_result=min(result),
+            mean_result=mean(result),
+            max_result=max(result),
+            var_result=var(result),
+            last_result=day[num_of_results],
+            diff_of_last_and_max=ifelse(num_of_results==1, NA, max_result-result[num_of_results]),
+            diff_of_last_and_min=ifelse(num_of_results==1, NA, result[num_of_results]-min_result),
+            Result_2016=factor(names(which.max(table(Result2016)))))
+
+#Aug_med_ABvsC.sum.21
+Aug_med_ABvsC.sum.21 <- Aug_med_ABvsC.tall.21 %>% 
+  group_by(ID) %>% 
+  summarize(Gender=max(Gender),
+            Age=max(Age),
+            BMI=max(BMI),
+            AsaScore=max(AsaScore),
+            TexturePancreas=max(TexturePancreas),
+            MPD_Diameter=max(MPD_Diameter),
+            DGE_YesOrNot=max(DGE_YesOrNot),
+            POPF=max(POPF),
+            Bleeding=max(Bleeding),
+            Reoperation=max(Reoperation),
+            EndoscopicReintervention=max(EndoscopicReintervention),
+            RadiologicalReintervention=max(RadiologicalReintervention),
+            OrganFailure=max(OrganFailure),
+            InHospitalMortality=max(InHospitalMortality),
+            HospitalReadmission=max(HospitalReadmission),
+            HospitalStay=max(HospitalStay),
+            POD_DrainRemoval=max(POD_DrainRemoval),
+            num_of_results=n(),
+            min_result=min(result),
+            mean_result=mean(result),
+            max_result=max(result),
+            var_result=var(result),
+            last_result=day[num_of_results],
+            diff_of_last_and_max=ifelse(num_of_results==1, NA, max_result-result[num_of_results]),
+            diff_of_last_and_min=ifelse(num_of_results==1, NA, result[num_of_results]-min_result),
+            Result_2016=factor(names(which.max(table(Result2016)))))
+
+#Aug_med_AvsBC.sum.21
+Aug_med_AvsBC.sum.21 <- Aug_med_AvsBC.tall.21 %>% 
+  group_by(ID) %>% 
+  summarize(Gender=max(Gender),
+            Age=max(Age),
+            BMI=max(BMI),
+            AsaScore=max(AsaScore),
+            TexturePancreas=max(TexturePancreas),
+            MPD_Diameter=max(MPD_Diameter),
+            DGE_YesOrNot=max(DGE_YesOrNot),
+            POPF=max(POPF),
+            Bleeding=max(Bleeding),
+            Reoperation=max(Reoperation),
+            EndoscopicReintervention=max(EndoscopicReintervention),
+            RadiologicalReintervention=max(RadiologicalReintervention),
+            OrganFailure=max(OrganFailure),
+            InHospitalMortality=max(InHospitalMortality),
+            HospitalReadmission=max(HospitalReadmission),
+            HospitalStay=max(HospitalStay),
+            POD_DrainRemoval=max(POD_DrainRemoval),
+            num_of_results=n(),
+            min_result=min(result),
+            mean_result=mean(result),
+            max_result=max(result),
+            var_result=var(result),
+            last_result=day[num_of_results],
+            diff_of_last_and_max=ifelse(num_of_results==1, NA, max_result-result[num_of_results]),
+            diff_of_last_and_min=ifelse(num_of_results==1, NA, result[num_of_results]-min_result),
+            Result_2016=factor(names(which.max(table(Result2016)))))
+
+```
+
+```{r}
+#1-week data:
+#Aug_med_0vsABC.sum.7
+Aug_med_0vsABC.sum.7 <- Aug_med_0vsABC.tall.7 %>% 
+  group_by(ID) %>% 
+  summarize(Gender=max(Gender),
+            Age=max(Age),
+            BMI=max(BMI),
+            AsaScore=max(AsaScore),
+            TexturePancreas=max(TexturePancreas),
+            MPD_Diameter=max(MPD_Diameter),
+            DGE_YesOrNot=max(DGE_YesOrNot),
+            POPF=max(POPF),
+            Bleeding=max(Bleeding),
+            Reoperation=max(Reoperation),
+            EndoscopicReintervention=max(EndoscopicReintervention),
+            RadiologicalReintervention=max(RadiologicalReintervention),
+            OrganFailure=max(OrganFailure),
+            InHospitalMortality=max(InHospitalMortality),
+            HospitalReadmission=max(HospitalReadmission),
+            HospitalStay=max(HospitalStay),
+            POD_DrainRemoval=max(POD_DrainRemoval),
+            num_of_results=n(),
+            min_result=min(result),
+            mean_result=mean(result),
+            max_result=max(result),
+            var_result=var(result),
+            last_result=day[num_of_results],
+            diff_of_last_and_max=ifelse(num_of_results==1, NA, max_result-result[num_of_results]),
+            diff_of_last_and_min=ifelse(num_of_results==1, NA, result[num_of_results]-min_result),
+            Result_2016=factor(names(which.max(table(Result2016)))))
+
+#Aug_med_0ABvsC.sum.7
+Aug_med_0ABvsC.sum.7 <- Aug_med_0ABvsC.tall.7 %>% 
+  group_by(ID) %>% 
+  summarize(Gender=max(Gender),
+            Age=max(Age),
+            BMI=max(BMI),
+            AsaScore=max(AsaScore),
+            TexturePancreas=max(TexturePancreas),
+            MPD_Diameter=max(MPD_Diameter),
+            DGE_YesOrNot=max(DGE_YesOrNot),
+            POPF=max(POPF),
+            Bleeding=max(Bleeding),
+            Reoperation=max(Reoperation),
+            EndoscopicReintervention=max(EndoscopicReintervention),
+            RadiologicalReintervention=max(RadiologicalReintervention),
+            OrganFailure=max(OrganFailure),
+            InHospitalMortality=max(InHospitalMortality),
+            HospitalReadmission=max(HospitalReadmission),
+            HospitalStay=max(HospitalStay),
+            POD_DrainRemoval=max(POD_DrainRemoval),
+            num_of_results=n(),
+            min_result=min(result),
+            mean_result=mean(result),
+            max_result=max(result),
+            var_result=var(result),
+            last_result=day[num_of_results],
+            diff_of_last_and_max=ifelse(num_of_results==1, NA, max_result-result[num_of_results]),
+            diff_of_last_and_min=ifelse(num_of_results==1, NA, result[num_of_results]-min_result),
+            Result_2016=factor(names(which.max(table(Result2016)))))
+
+#Aug_med_AvsBvsC.sum.7
+Aug_med_AvsBvsC.sum.7 <- Aug_med_AvsBvsC.tall.7 %>% 
+  group_by(ID) %>% 
+  summarize(Gender=max(Gender),
+            Age=max(Age),
+            BMI=max(BMI),
+            AsaScore=max(AsaScore),
+            TexturePancreas=max(TexturePancreas),
+            MPD_Diameter=max(MPD_Diameter),
+            DGE_YesOrNot=max(DGE_YesOrNot),
+            POPF=max(POPF),
+            Bleeding=max(Bleeding),
+            Reoperation=max(Reoperation),
+            EndoscopicReintervention=max(EndoscopicReintervention),
+            RadiologicalReintervention=max(RadiologicalReintervention),
+            OrganFailure=max(OrganFailure),
+            InHospitalMortality=max(InHospitalMortality),
+            HospitalReadmission=max(HospitalReadmission),
+            HospitalStay=max(HospitalStay),
+            POD_DrainRemoval=max(POD_DrainRemoval),
+            num_of_results=n(),
+            min_result=min(result),
+            mean_result=mean(result),
+            max_result=max(result),
+            var_result=var(result),
+            last_result=day[num_of_results],
+            diff_of_last_and_max=ifelse(num_of_results==1, NA, max_result-result[num_of_results]),
+            diff_of_last_and_min=ifelse(num_of_results==1, NA, result[num_of_results]-min_result),
+            Result_2016=factor(names(which.max(table(Result2016)))))
+
+#Aug_med_ABvsC.sum.7
+Aug_med_ABvsC.sum.7 <- Aug_med_ABvsC.tall.7 %>% 
+  group_by(ID) %>% 
+  summarize(Gender=max(Gender),
+            Age=max(Age),
+            BMI=max(BMI),
+            AsaScore=max(AsaScore),
+            TexturePancreas=max(TexturePancreas),
+            MPD_Diameter=max(MPD_Diameter),
+            DGE_YesOrNot=max(DGE_YesOrNot),
+            POPF=max(POPF),
+            Bleeding=max(Bleeding),
+            Reoperation=max(Reoperation),
+            EndoscopicReintervention=max(EndoscopicReintervention),
+            RadiologicalReintervention=max(RadiologicalReintervention),
+            OrganFailure=max(OrganFailure),
+            InHospitalMortality=max(InHospitalMortality),
+            HospitalReadmission=max(HospitalReadmission),
+            HospitalStay=max(HospitalStay),
+            POD_DrainRemoval=max(POD_DrainRemoval),
+            num_of_results=n(),
+            min_result=min(result),
+            mean_result=mean(result),
+            max_result=max(result),
+            var_result=var(result),
+            last_result=day[num_of_results],
+            diff_of_last_and_max=ifelse(num_of_results==1, NA, max_result-result[num_of_results]),
+            diff_of_last_and_min=ifelse(num_of_results==1, NA, result[num_of_results]-min_result),
+            Result_2016=factor(names(which.max(table(Result2016)))))
+
+#Aug_med_AvsBC.sum.7
+Aug_med_AvsBC.sum.7 <- Aug_med_AvsBC.tall.7 %>% 
+  group_by(ID) %>% 
+  summarize(Gender=max(Gender),
+            Age=max(Age),
+            BMI=max(BMI),
+            AsaScore=max(AsaScore),
+            TexturePancreas=max(TexturePancreas),
+            MPD_Diameter=max(MPD_Diameter),
+            DGE_YesOrNot=max(DGE_YesOrNot),
+            POPF=max(POPF),
+            Bleeding=max(Bleeding),
+            Reoperation=max(Reoperation),
+            EndoscopicReintervention=max(EndoscopicReintervention),
+            RadiologicalReintervention=max(RadiologicalReintervention),
+            OrganFailure=max(OrganFailure),
+            InHospitalMortality=max(InHospitalMortality),
+            HospitalReadmission=max(HospitalReadmission),
+            HospitalStay=max(HospitalStay),
+            POD_DrainRemoval=max(POD_DrainRemoval),
+            num_of_results=n(),
+            min_result=min(result),
+            mean_result=mean(result),
+            max_result=max(result),
+            var_result=var(result),
+            last_result=day[num_of_results],
+            diff_of_last_and_max=ifelse(num_of_results==1, NA, max_result-result[num_of_results]),
+            diff_of_last_and_min=ifelse(num_of_results==1, NA, result[num_of_results]-min_result),
+            Result_2016=factor(names(which.max(table(Result2016)))))
+
+```
+
+Okay!  Let's get to work!
+
+The goal is to see how well we can predict with each data set.  Can we just use the results obtained from aggregating the test results, or do we need other factors?  
+
+Originally, I got great results for 0 vs ABC using a random forest for 1-week's worth of data, using just the test results.  Let's double-check that:
+
+```{r}
+#get only patients with more than one result:
+Aug_med_0vsABC.sum.7.2 <- Aug_med_0vsABC.sum.7 %>% 
+  filter(num_of_results > 1)
+
+#shuffle the data:
+set.seed(1311)
+Aug_med_0vsABC.sum.7.2 <- sample_frac(Aug_med_0vsABC.sum.7.2)  #1040 rows
+
+#training and test sets:
+n <- round(nrow(Aug_med_0vsABC.sum.7.2))
+Aug_med_0vsABC.sum.7.2.train <- Aug_med_0vsABC.sum.7.2[1:(n*.75),]
+Aug_med_0vsABC.sum.7.2.test <- Aug_med_0vsABC.sum.7.2[((n*.75)+1):n,]
+
+
+randomForest(Result_2016 ~ min_result + max_result + var_result + 
+             diff_of_last_and_max + diff_of_last_and_min, data=Aug_med_0vsABC.sum.7.2.train,
+             xtest=select(Aug_med_0vsABC.sum.7.2.test, min_result, max_result, var_result, 
+             diff_of_last_and_max, diff_of_last_and_min), ytest=Aug_med_0vsABC.sum.7.2.test$Result_2016,
+             maxnodes = 200, type='prob', importance=TRUE, proximity = TRUE, keep.forest=TRUE)
+
+137/140
+```
+
+Right. That's really good.  Let's try 21 days of data to see if we get any better results:
+
+```{r}
+#get only patients with more than one result:
+Aug_med_0vsABC.sum.21.2 <- Aug_med_0vsABC.sum.21 %>% 
+  filter(num_of_results > 1)
+
+#shuffle the data:
+set.seed(1312)
+Aug_med_0vsABC.sum.21.2 <- sample_frac(Aug_med_0vsABC.sum.21.2)  #1040 rows
+
+#training and test sets:
+n <- round(nrow(Aug_med_0vsABC.sum.21.2))
+Aug_med_0vsABC.sum.21.2.train <- Aug_med_0vsABC.sum.21.2[1:(n*.75),]
+Aug_med_0vsABC.sum.21.2.test <- Aug_med_0vsABC.sum.21.2[((n*.75)+1):n,]
+
+
+randomForest(Result_2016 ~ Age + Gender + BMI + AsaScore + TexturePancreas + min_result + max_result + var_result + 
+             diff_of_last_and_max + diff_of_last_and_min, data=Aug_med_0vsABC.sum.21.2.train,
+             xtest=select(Aug_med_0vsABC.sum.21.2.test, Age, Gender, BMI, AsaScore, TexturePancreas, min_result, max_result, var_result, 
+             diff_of_last_and_max, diff_of_last_and_min), ytest=Aug_med_0vsABC.sum.21.2.test$Result_2016,
+             maxnodes = 200, type='prob', importance=TRUE, proximity = TRUE, keep.forest=TRUE)
+
+```
+
+Not much different.
+
+```{r}
+#get only patients with more than one result:
+Aug_med_AvsBvsC.sum.7.2 <- Aug_med_AvsBvsC.sum.7 %>% 
+  filter(num_of_results > 1)
+
+#shuffle the data:
+set.seed(1312)
+Aug_med_AvsBvsC.sum.7.2 <- sample_frac(Aug_med_AvsBvsC.sum.7.2) 
+
+#training and test sets:
+n <- round(nrow(Aug_med_AvsBvsC.sum.7.2))
+Aug_med_AvsBvsC.sum.7.2.train <- Aug_med_AvsBvsC.sum.7.2[1:(n*.75),]
+Aug_med_AvsBvsC.sum.7.2.test <- Aug_med_AvsBvsC.sum.7.2[((n*.75)+1):n,]
+
+
+randomForest(Result_2016 ~ num_of_results + min_result + max_result + var_result + 
+             diff_of_last_and_max + diff_of_last_and_min, data=Aug_med_AvsBvsC.sum.7.2.train,
+             xtest=select(Aug_med_AvsBvsC.sum.7.2.test, num_of_results, min_result, max_result, var_result, 
+             diff_of_last_and_max, diff_of_last_and_min), ytest=Aug_med_AvsBvsC.sum.7.2.test$Result_2016,
+             maxnodes = 200, type='prob', importance=TRUE, proximity = TRUE, keep.forest=TRUE)
+
+```
+
+That is not good.  
+
+```{r}
+#get only patients with more than one result:
+Aug_med_AvsBvsC.sum.21.2 <- Aug_med_AvsBvsC.sum.21 %>% 
+  filter(num_of_results > 1)
+
+#shuffle the data:
+set.seed(1312)
+Aug_med_AvsBvsC.sum.21.2 <- sample_frac(Aug_med_AvsBvsC.sum.21.2) 
+
+#training and test sets:
+n <- round(nrow(Aug_med_AvsBvsC.sum.21.2))
+Aug_med_AvsBvsC.sum.21.2.train <- Aug_med_AvsBvsC.sum.21.2[1:(n*.75),]
+Aug_med_AvsBvsC.sum.21.2.test <- Aug_med_AvsBvsC.sum.21.2[((n*.75)+1):n,]
+
+
+randomForest(Result_2016 ~ num_of_results + min_result + max_result + var_result + 
+             diff_of_last_and_max + diff_of_last_and_min, data=Aug_med_AvsBvsC.sum.21.2.train,
+             xtest=select(Aug_med_AvsBvsC.sum.21.2.test, num_of_results, min_result, max_result, var_result, 
+             diff_of_last_and_max, diff_of_last_and_min), ytest=Aug_med_AvsBvsC.sum.21.2.test$Result_2016,
+             maxnodes = 200, type='prob', importance=TRUE, proximity = TRUE, keep.forest=TRUE)
+
+```
+
+No better with 3 weeks of data.
+
+```{r}
+randomForest(Result_2016 ~ Gender + Age + num_of_results + min_result + max_result + var_result + 
+             diff_of_last_and_max + diff_of_last_and_min, data=Aug_med_AvsBvsC.sum.7.2.train,
+             xtest=select(Aug_med_AvsBvsC.sum.7.2.test, Gender, Age, num_of_results, min_result, max_result, var_result, 
+             diff_of_last_and_max, diff_of_last_and_min), ytest=Aug_med_AvsBvsC.sum.7.2.test$Result_2016,
+             maxnodes = 200, type='prob', importance=TRUE, proximity = TRUE, keep.forest=TRUE, cutoff=c(0.45, 0.45, 0.1))
+```
+
+This might be suffering from an unbalanced data set.  Let's fix that first.
+
+```{r}
+table(Aug_med_AvsBvsC.sum.7.2$Result_2016)
+
+set.seed(131)
+Aug_med_AvsBvsC.sum.7.2.bal <- sample_frac(
+  rbind(sample_n(filter(Aug_med_AvsBvsC.sum.7.2, Result_2016 == 'A'), 113),
+        sample_n(filter(Aug_med_AvsBvsC.sum.7.2, Result_2016 == 'B'), 113),
+        sample_n(filter(Aug_med_AvsBvsC.sum.7.2, Result_2016 == 'C'), 113)))
+
+randomForest(Result_2016 ~ Gender + Age + BMI + AsaScore + TexturePancreas + min_result + max_result + var_result + 
+             diff_of_last_and_max + diff_of_last_and_min, data=Aug_med_AvsBvsC.sum.7.2.bal,
+             maxnodes = 200, type='prob', importance=TRUE, proximity = TRUE, keep.forest=TRUE)
+             #cutoff=c(0.4, 0.4, 0.2))
+```
+
+This is still basically chance.  
+
+```{r}
+dim(Aug_med_AvsBvsC.sum.7.2)
+sum(is.na(Aug_med_AvsBvsC.sum.7.2$OrganFailure))
+
+#Too many missing values in:
+#MPD_Diameter: 286 of 596
+#Organ Failure: 221 of 596
+#POD_DrainRemoval: 106 of 596
+
+#Also Don't use:
+#lastResult
+#HospitalStay
+#HospitalReadmission
+
+#getting just the complete cases from with the columns above removed:
+Aug_med_AvsBvsC.sum.7.2.cc <- Aug_med_AvsBvsC.sum.7.2[complete.cases(select(Aug_med_AvsBvsC.sum.7.2, ID, Gender, Age, BMI, AsaScore, TexturePancreas, min_result, max_result, var_result, diff_of_last_and_max, diff_of_last_and_min, Result_2016)),]
+
+Aug_med_AvsBvsC.sum.7.2.cc <- Aug_med_AvsBvsC.sum.7.2.cc %>% 
+  select(ID, Gender, Age, BMI, AsaScore, TexturePancreas, min_result, max_result, var_result, diff_of_last_and_max, diff_of_last_and_min, Result_2016)
+
+table(Aug_med_AvsBvsC.sum.7.2.cc$Result_2016)
+
+```
+
+Let's now balance this dataset:
+
+```{r}
+set.seed(133)
+Aug_med_AvsBvsC.sum.7.2.cc.bal <- sample_frac(
+  rbind(sample_n(filter(Aug_med_AvsBvsC.sum.7.2.cc, Result_2016 == 'A'), 96),
+        sample_n(filter(Aug_med_AvsBvsC.sum.7.2.cc, Result_2016 == 'B'), 96),
+        sample_n(filter(Aug_med_AvsBvsC.sum.7.2.cc, Result_2016 == 'C'), 96)))
+
+# how_many <- 70
+# XA <- how_many/sum(Aug_med_AvsBvsC.sum.7.2.cc$Result_2016 == 'A')
+# XB <- how_many/sum(Aug_med_AvsBvsC.sum.7.2.cc$Result_2016 == 'B')
+# XC <- how_many/sum(Aug_med_AvsBvsC.sum.7.2.cc$Result_2016 == 'C')
+# 
+# Aug_med_AvsBvsC.sum.7.2.cc.bal <- Aug_med_AvsBvsC.sum.7.2.cc %>%
+#   mutate(train_or_test = case_when(Result_2016 == 'A' ~ ifelse(runif() < XA, 0, 1),
+#                                    Result_2016 == 'B' ~ ifelse(runif() < XB, 0, 1),
+#                                    Result_2016 == 'C' ~ ifelse(runif() <  XC, 0, 1)))
+
+Aug_med_AvsBvsC.sum.7.2.cc.bal
+```
+
+Let's get a training and test set and then randomForest everything!!!
+
+```{r}
+#training and test sets:
+set.seed(133)
+n <- round(nrow(Aug_med_AvsBvsC.sum.7.2.cc.bal))
+Aug_med_ABC.cc.train <- Aug_med_AvsBvsC.sum.7.2.cc.bal[1:(n*.75),]
+Aug_med_ABC.cc.test <- Aug_med_AvsBvsC.sum.7.2.cc.bal[((n*.75)+1):n,]
+
+Aug_med_ABC.rf <- randomForest(Result_2016 ~ . - ID, data=Aug_med_ABC.cc.train,
+             xtest=select(Aug_med_AvsBvsC.sum.7.2.cc, -Result_2016, -ID), ytest=Aug_med_AvsBvsC.sum.7.2.cc$Result_2016,
+             maxnodes = 100, type='prob', importance=TRUE, proximity = TRUE, keep.forest=TRUE, 
+             cutoff=c(0.36, 0.34, 0.3), mtry=8)
+
+Aug_med_ABC.rf2 <- randomForest(Result_2016 ~ max_result + diff_of_last_and_max + diff_of_last_and_min, data=Aug_med_ABC.cc.train,
+             xtest=select(Aug_med_AvsBvsC.sum.7.2.cc, max_result, diff_of_last_and_max, diff_of_last_and_min), ytest=Aug_med_AvsBvsC.sum.7.2.cc$Result_2016,
+             maxnodes = 100, type='prob', importance=TRUE, proximity = TRUE, keep.forest=TRUE, 
+             cutoff=c(0.36, 0.34, 0.3), mtry=3)
+
+
+Aug_med_ABC.rf
+```
+
+```{r}
+Aug_med_ABC.rf2
+```
+
+Let's get a balanced training set and then use everything else as the test set:
+
+```{r}
+set.seed(133)
+Aug_med_AvsBvsC.sum.7.2.train2 <- sample_frac(
+  rbind(sample_n(filter(Aug_med_AvsBvsC.sum.7.2.cc, Result_2016 == 'A'), 72),
+        sample_n(filter(Aug_med_AvsBvsC.sum.7.2.cc, Result_2016 == 'B'), 72),
+        sample_n(filter(Aug_med_AvsBvsC.sum.7.2.cc, Result_2016 == 'C'), 72)))
+```
+
+```{r}
+Aug_med_AvsBvsC.sum.7.2.test2 <- filter(Aug_med_AvsBvsC.sum.7.2.cc, !ID %in% Aug_med_AvsBvsC.sum.7.2.train2$ID)
+```
+
+```{r}
+Aug_med_ABC.rf <- randomForest(Result_2016 ~ . - ID, data=Aug_med_AvsBvsC.sum.7.2.train2,
+             xtest=select(Aug_med_AvsBvsC.sum.7.2.test2, -Result_2016, -ID), ytest=Aug_med_AvsBvsC.sum.7.2.test2$Result_2016,
+             maxnodes = 100, type='prob', importance=TRUE, proximity = TRUE, keep.forest=TRUE, 
+             cutoff=c(0.36, 0.34, 0.3), mtry=6)
+
+Aug_med_ABC.rf3 <- randomForest(Result_2016 ~ min_result + var_result + max_result + diff_of_last_and_max + diff_of_last_and_min, data=Aug_med_AvsBvsC.sum.7.2.train2,
+             xtest=select(Aug_med_AvsBvsC.sum.7.2.test2, min_result, var_result, max_result, diff_of_last_and_max, diff_of_last_and_min), ytest=Aug_med_AvsBvsC.sum.7.2.test2$Result_2016,
+             maxnodes = 100, type='prob', importance=TRUE, proximity = TRUE, keep.forest=TRUE, 
+             cutoff=c(0.36, 0.34, 0.3), mtry = 3)
+
+?randomForest
+Aug_med_ABC.rf3
+Aug_med_ABC.rf
+
+library(pROC)
+
+ABC.pred.rf <- predict(Aug_med_ABC.rf, Aug_med_AvsBvsC.sum.7.2.test2, type = 'prob')
+ABC.mroc <- roc(ifelse(Aug_med_AvsBvsC.sum.7.2.test2$Result_2016 == 'C', 1, 0), ABC.pred.rf[,3], plot=T)
+ABC.auc <- auc(ifelse(Aug_med_AvsBvsC.sum.7.2.test2$Result_2016 == 'C', 1, 0), ABC.pred.rf[,3])
+coords(ABC.mroc, .4, "threshold", ret=c("sensitivity","specificity","ppv","npv"))
+
+```
+
+```{r}
+Aug_med_test_prob <- as.tibble(predict(Aug_med_ABC.rf, Aug_med_ABC.cc.test, 'prob'))
+
+Aug_med_test_prob$Result_2016 <- as.character(Aug_med_ABC.cc.test$Result_2016)
+
+Aug_med_ABC.cc.train
+```
+
+Can I use `lime` to find the most important features?
+
+```{r}
+#in the online tutorial, they use caret::train.  Let's try that:
+Aug_med_ABC.caret.rf <- caret::train(Result_2016 ~ .,
+                         data = Aug_med_ABC.cc.train,
+                         method = "rf")
+
+Aug_med_ABC.caret.rf$finalModel
+```
+
+```{r}
+explainer <- lime(Aug_med_ABC.cc.train, Aug_med_ABC.caret.rf, 
+bin_continuous = FALSE, n_permutations = 100)
+
+explanation <- lime::explain(Aug_med_ABC.cc.train[4,], explainer, n_labels=3, n_features=5)
+
+windowsFonts(Times=windowsFont("TT Times New Roman"))
+plot_features(explanation)
+
+
+```
+
+```{r}
+Aug_med_train_prob <- predict(Aug_med_ABC.caret.rf, Aug_med_ABC.cc.train, 'prob') %>% 
+  mutate(Result_2016=Aug_med_ABC.cc.train$Result_2016)
+
+Aug_med_train_prob
+```
+
+```{r}
+Aug_med_test_prob <- predict(Aug_med_ABC.caret.rf, Aug_med_ABC.cc.test, 'prob') %>% 
+  mutate(Result_2016=Aug_med_ABC.cc.test$Result_2016)
+
+Aug_med_test_prob
+
+```
+
+Let's make sure our 0 vs ABC random forest is okay with the added variables:
+
+```{r}
+Aug_med_0vsABC.sum.7.2.best_var <- Aug_med_0vsABC.sum.7.2 %>% 
+  select(Gender, Age, BMI, AsaScore, TexturePancreas, min_result, max_result, var_result, diff_of_last_and_max, diff_of_last_and_min, Result_2016)
+
+Aug_med_0vsABC.7.cc <- Aug_med_0vsABC.sum.7.2.best_var[complete.cases(Aug_med_0vsABC.sum.7.2.best_var),]
+
+#shuffle the data:
+set.seed(1311)
+Aug_med_0vsABC.7.cc <- sample_frac(Aug_med_0vsABC.7.cc)  #834 rows
+
+#training and test sets:
+n <- round(nrow(Aug_med_0vsABC.7.cc))
+Aug_med_0vsABC.cc.train <- Aug_med_0vsABC.7.cc[1:(n*.75),]
+Aug_med_0vsABC.cc.test <- Aug_med_0vsABC.7.cc[((n*.75)+1):n,]
+
+
+randomForest(Result_2016 ~ ., data=Aug_med_0vsABC.cc.train,
+             xtest=select(Aug_med_0vsABC.cc.test, -Result_2016), ytest=Aug_med_0vsABC.cc.test$Result_2016,
+             maxnodes = 200, type='prob', importance=TRUE, proximity = TRUE, keep.forest=TRUE)
+
+Aug_med_0vsABC.cc.train
+```
+
+Let's now do A vs BC, as A vs B vs C was not working out so well.  I'll run this again, on Giulio's advice, with A vs BC:
+
+```{r}
+#get only patients with more than one result:
+Aug_med_AvsBC.sum.7.2 <- Aug_med_AvsBC.sum.7 %>% 
+  filter(num_of_results > 1)
+
+#shuffle the data:
+set.seed(1311)
+Aug_med_AvsBC.sum.7.2 <- sample_frac(Aug_med_AvsBC.sum.7.2)  #596 rows
+
+#using only complete cases with the variables we want:
+Aug_med_AvsBC.cc <- Aug_med_AvsBC.sum.7.2 %>% 
+  select(Gender, Age, BMI, AsaScore, TexturePancreas, min_result, max_result, var_result, diff_of_last_and_max, diff_of_last_and_min, Result_2016)
+
+Aug_med_AvsBC.cc <- Aug_med_AvsBC.cc[complete.cases(Aug_med_AvsBC.cc),]
+
+#balancing the data set:
+#table(Aug_med_AvsBC.cc$Result_2016) A: 190, BC:301
+
+set.seed(133)
+Aug_med_AvsBC.cc.bal <- sample_frac(
+  rbind(sample_n(filter(Aug_med_AvsBC.cc, Result_2016 == 'A'), 190),
+        sample_n(filter(Aug_med_AvsBC.cc, Result_2016 == 'BC'), 190)))
+
+table(Aug_med_AvsBC.cc.bal$Result_2016)
+```
+
+```{r}
+#training and test sets:
+n <- round(nrow(Aug_med_AvsBC.cc.bal))
+Aug_med_AvsBC.train <- Aug_med_AvsBC.cc.bal[1:(n*.75),]
+Aug_med_AvsBC.test <- Aug_med_AvsBC.cc.bal[((n*.75)+1):n,]
+
+randomForest(Result_2016 ~ ., data=Aug_med_AvsBC.train,
+             xtest=select(Aug_med_AvsBC.test, -Result_2016), ytest=Aug_med_AvsBC.test$Result_2016,
+             maxnodes = 200, type='prob', importance=TRUE, proximity = TRUE, keep.forest=TRUE)
+```
+
+Well, 60% accuracy is not great.  Let's try AB vs C:
+
+
+```{r}
+#get only patients with more than one result:
+Aug_med_ABvsC.sum.7.2 <- Aug_med_ABvsC.sum.7 %>% 
+  filter(num_of_results > 1)
+
+#shuffle the data:
+set.seed(1311)
+Aug_med_ABvsC.sum.7.2 <- sample_frac(Aug_med_ABvsC.sum.7.2)  #596 rows
+
+#using only complete cases with the variables we want:
+Aug_med_ABvsC.cc <- Aug_med_ABvsC.sum.7.2 %>% 
+  select(Gender, Age, BMI, AsaScore, TexturePancreas, min_result, max_result, var_result, diff_of_last_and_max, diff_of_last_and_min, Result_2016)
+
+Aug_med_ABvsC.cc <- Aug_med_ABvsC.cc[complete.cases(Aug_med_ABvsC.cc),]
+
+#balancing the data set:
+#table(Aug_med_AvsBC.cc$Result_2016) A: 190, BC:301
+
+set.seed(133)
+Aug_med_ABvsC.cc.bal <- sample_frac(
+  rbind(sample_n(filter(Aug_med_ABvsC.cc, Result_2016 == 'AB'), 96),
+        sample_n(filter(Aug_med_ABvsC.cc, Result_2016 == 'C'), 96)))
+
+table(Aug_med_ABvsC.cc.bal$Result_2016)
+```
+
+```{r}
+#training and test sets:
+n <- round(nrow(Aug_med_ABvsC.cc.bal))
+Aug_med_ABvsC.train <- Aug_med_ABvsC.cc.bal[1:(n*.75),]
+Aug_med_ABvsC.test <- Aug_med_ABvsC.cc.bal[((n*.75)+1):n,]
+
+randomForest(Result_2016 ~ ., data=Aug_med_ABvsC.train,
+             xtest=select(Aug_med_ABvsC.test, -Result_2016), ytest=Aug_med_ABvsC.test$Result_2016,
+             maxnodes = 100, type='prob', importance=TRUE, proximity = TRUE, keep.forest=TRUE)
+```
+
+Okay.  This is not going that well, but what is our goal.  We want a system that outputs a probability of being `C`.  It might be that the baseline probability is low.
+
+```{r}
+dim(filter(Aug_med, Result2016 == 'C'))[1]/length(Aug_med$Result2016)
+```
+
+The baseline, without knowing anything about the patient is 9.7%.
+
+Once we separate them into 0 vs ABC, the probability goes up to:
+
+```{r}
+dim(filter(Aug_med, Result2016 == 'C'))[1]/dim(filter(Aug_med, Result2016 %in% c('A', 'B', 'C')))[1]
+```
+
+Now the probability is 21.37%.
+
+We just need a way to modify that probability.  Not too much, but how do we do that??  When in doubt, visualize:
+
+```{r, fig.height=7, fig.width=10}
+ggplot(Aug_med_AvsBvsC.sum.7.2.cc, aes(x=as.factor(Age), y=BMI, color=Result_2016)) +
+  geom_point()
+```
+
+```{r, fig.height=7, fig.width=10}
+ggplot(filter(Aug_med_AvsBvsC.sum.7.2.cc, var_result < 1000000), aes(x=Result_2016, y=diff_of_last_and_max+1, fill=as.factor(cut_number(BMI,4)))) +
+  geom_boxplot() +
+  scale_y_log10()
+
+```
+
+```{r, fig.height=7, fig.width=10}
+ggplot(Aug_med_AvsBvsC.sum.7.2.cc, aes(x=as.factor(Gender), y=BMI, color=Result_2016)) +
+  geom_jitter(height = 0)
+```
+
+```{r, fig.height=7, fig.width=10}
+ggplot(Aug_med_AvsBvsC.sum.7.2.cc, aes(x=as.factor(Gender), y=TexturePancreas, color=Result_2016)) +
+  geom_jitter(height = 0.3)
+```
+
+```{r, fig.height=7, fig.width=10}
+ggplot(filter(Aug_med_AvsBvsC.sum.7.2.cc, diff_of_last_and_max < 100000), aes(x=as.factor(Gender), y=(diff_of_last_and_max+1), color=Result_2016)) +
+  geom_jitter(height = 0.1) +
+  scale_y_log10()
+```
+
+```{r, fig.height=7, fig.width=10}
+ggplot(filter(Aug_med_AvsBvsC.sum.7.2.cc, diff_of_last_and_max < 100000), aes(x=var_result+1, y=(diff_of_last_and_max+1), color=Result_2016)) +
+  geom_point() +
+  scale_x_log10() +
+  scale_y_log10()
+
+```
+
+```{r}
+
+```
