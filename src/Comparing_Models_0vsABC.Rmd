@@ -1,0 +1,189 @@
+---
+title: "Comparing Models: 0 vs ABC"
+author: "Christopher Morano"
+date: "September 20, 2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(randomForest)
+library(fastAdaboost)
+library(xgboost)
+library(caret)
+library(lime)
+library(pROC)
+library(printr)
+```
+
+In this document, I will compare the accuracy, sensitivity, specificity, and AUC of a random forest model, an adaboost model, and an XGBoost model.  
+
+First we need to prepare our data set:
+
+```{r}
+Aug_med <- read_csv('../data/Med_data_Aug21.csv', col_types=list("Day4"=col_character(), 
+                                                                 "Day6"=col_character(),
+                                                                 "Day7"=col_character()))
+#Let's take the first 7 days of medical results:
+Aug_med_day7 <- select(Aug_med, ID:Day7)
+Aug_med_0vsABC <- Aug_med_day7
+Aug_med_0vsABC[Aug_med_0vsABC$Result2016 %in% c("A", "B", "C"),]$Result2016 <- "ABC"
+Aug_med_0vsABC$Result2016 <- factor(Aug_med_0vsABC$Result2016)
+
+#Making the data tall:
+Aug_med_0vsABC.tall.7 <- gather(select(Aug_med_0vsABC, ID, Result2016, Day1:Day7), day, result, Day1:Day7) %>% 
+  filter(!is.na(result)) %>% 
+  arrange(ID)
+
+head(Aug_med_0vsABC.tall.7)
+```
+
+```{r}
+#Replacing non-numeric variables, converting to numeric:
+set.seed(1313)
+Aug_med_0vsABC.tall.7$result[Aug_med_0vsABC.tall.7$result == '<10'] <- round(runif(12, 1, 9))
+Aug_med_0vsABC.tall.7$result[Aug_med_0vsABC.tall.7$result == '>30000'] <- '30001'
+Aug_med_0vsABC.tall.7$result <- as.numeric(Aug_med_0vsABC.tall.7$result)
+
+#Summarizing the results:
+Aug_med_0vsABC.sum.7 <- Aug_med_0vsABC.tall.7 %>% 
+  group_by(ID) %>% 
+  summarize(num_of_results=n(),
+            min_result=min(result),
+            mean_result=mean(result),
+            max_result=max(result),
+            var_result=var(result),
+            diff_of_last_and_max=ifelse(num_of_results==1, NA, max_result-result[num_of_results]),
+            diff_of_last_and_min=ifelse(num_of_results==1, NA, result[num_of_results]-min_result),
+            Result_2016=factor(names(which.max(table(Result2016)))))
+
+#removing cases with only 1 result:
+Aug_med_0vsABC.sum.7.2 <- Aug_med_0vsABC.sum.7 %>% 
+  filter(num_of_results > 1)
+
+head(Aug_med_0vsABC.sum.7.2)
+```
+
+Now let's shuffle the data and create a training and test set:
+
+```{r}
+set.seed(1315)
+Aug_med_0vsABC.sum.7.2 <- sample_frac(Aug_med_0vsABC.sum.7.2)  #1040 rows
+
+#training and test sets:
+n <- round(nrow(Aug_med_0vsABC.sum.7.2))
+Aug_med_0vsABC.sum.7.2.train <- Aug_med_0vsABC.sum.7.2[1:(n*.75),]
+Aug_med_0vsABC.sum.7.2.test <- Aug_med_0vsABC.sum.7.2[((n*.75)+1):n,]
+```
+
+Running a Random Forest Model:
+
+```{r}
+(Aug_med.0vsABC.rf <- randomForest(Result_2016 ~ max_result +
+             diff_of_last_and_max + diff_of_last_and_min, data=Aug_med_0vsABC.sum.7.2.train,
+             xtest=select(Aug_med_0vsABC.sum.7.2.test, max_result, 
+             diff_of_last_and_max, diff_of_last_and_min), ytest=Aug_med_0vsABC.sum.7.2.test$Result_2016,
+             maxnodes = 200, type='prob', importance=TRUE, proximity = TRUE, keep.forest=TRUE))
+```
+
+That's really good.  Let's look at the ROC curve for that one:
+
+```{r}
+Aug_med.0vsABC.pred.rf <- predict(Aug_med.0vsABC.rf, Aug_med_0vsABC.sum.7.2.test)
+Aug_med.0vsABC.mroc.rf <- roc(ifelse(Aug_med_0vsABC.sum.7.2.test$Result_2016 == "0", 1, 0),
+                           (as.numeric(Aug_med.0vsABC.pred.rf)-1), plot=TRUE)
+```
+
+```{r}
+auc(ifelse(Aug_med_0vsABC.sum.7.2.test$Result_2016 == "0", 1, 0), (as.numeric(Aug_med.0vsABC.pred.rf)-1))
+```
+
+```{r}
+coords(Aug_med.0vsABC.mroc.rf, .9, "threshold", ret=c("sensitivity","specificity","ppv","npv"))
+```
+
+Let's try the same with Adaboost:
+
+```{r}
+#adaboost does not like tibbles!  Needed to chage the data to `data.frame`:
+Aug_med.0vsABC.ada <- adaboost(Result_2016 ~ max_result + diff_of_last_and_max + diff_of_last_and_min,
+                               data=data.frame(Aug_med_0vsABC.sum.7.2.train), nIter=50)
+
+Aug_med.0vsABC.pred.ada <- predict(Aug_med.0vsABC.ada, Aug_med_0vsABC.sum.7.2.test)
+confusionMatrix(Aug_med.0vsABC.pred.ada$class, Aug_med_0vsABC.sum.7.2.test$Result_2016)
+```
+
+```{r}
+Aug_med.0vsABC.mroc.ada <- roc(as.numeric(Aug_med_0vsABC.sum.7.2.test$Result_2016)-1,
+                               as.numeric(Aug_med.0vsABC.pred.ada$class)-1, plot=TRUE)
+```
+
+```{r}
+auc(ordered(Aug_med_0vsABC.sum.7.2.test$Result_2016),
+                               ordered(Aug_med.0vsABC.pred.ada$class))
+```
+
+```{r}
+coords(Aug_med.0vsABC.mroc.ada, .9, "threshold", ret=c("sensitivity","specificity","ppv","npv"))
+```
+
+And finally, let's try XGBoost:
+
+```{r}
+#selecting the features:
+Aug_med_0vsABC.train_X <- Aug_med_0vsABC.sum.7.2.train %>% 
+  select(max_result, diff_of_last_and_max, diff_of_last_and_min)
+Aug_med_0vsABC.train_y <- Aug_med_0vsABC.sum.7.2.train$Result_2016
+
+Aug_med_0vsABC.test_X <- Aug_med_0vsABC.sum.7.2.test %>% 
+  select(max_result, diff_of_last_and_max, diff_of_last_and_min)
+Aug_med_0vsABC.test_y <- Aug_med_0vsABC.sum.7.2.test$Result_2016
+
+#converting X's to matrices and y's to 0's & 1's (for 0 and ABC, respectively):
+Aug_med_0vsABC.train_X.xgb <- model.matrix(~.-1, data=Aug_med_0vsABC.train_X)
+Aug_med_0vsABC.test_X.xgb <- model.matrix(~.-1, data=Aug_med_0vsABC.test_X)
+
+Aug_med_0vsABC.train_y.xgb <- abs(as.numeric(Aug_med_0vsABC.train_y) -2)
+Aug_med_0vsABC.test_y.xgb <- abs(as.numeric(Aug_med_0vsABC.test_y) -2)
+```
+
+```{r}
+#setting the paramaters:
+param       = list("objective" = "binary:logistic", # multi class classification
+              "eval_metric" = "auc",  	 # evaluation metric 
+              "max_depth" = 3,    		 # maximum depth of tree 
+              "eta" = 0.5,    			 # step size shrinkage 
+              "gamma" = 1,    			 # minimum loss reduction 
+              "subsample" = 0.5,    		 # part of data instances to grow tree 
+              "colsample_bytree" = 1, 		 # subsample ratio of columns when constructing each tree 
+              "min_child_weight" = 2  		 # minimum sum of instance weight needed in a child 
+              )
+```
+
+```{r}
+set.seed(1313)
+Aug_med.0vsABC.xgb = xgboost(
+		param=param,
+		data = Aug_med_0vsABC.train_X.xgb,
+		label = Aug_med_0vsABC.train_y.xgb,
+		nrounds=150)
+
+Aug_med.0vsABC.pred.xgb <- predict(Aug_med.0vsABC.xgb, Aug_med_0vsABC.test_X.xgb)
+confusionMatrix(round(Aug_med.0vsABC.pred.xgb), Aug_med_0vsABC.test_y.xgb)
+```
+
+```{r}
+Aug_med.0vsABC.mroc.xgb <- roc(Aug_med_0vsABC.test_y.xgb,
+                               round(Aug_med.0vsABC.pred.xgb), plot=TRUE)
+```
+
+```{r}
+auc(Aug_med_0vsABC.test_y.xgb,
+    round(Aug_med.0vsABC.pred.xgb))
+```
+
+```{r}
+coords(Aug_med.0vsABC.mroc.xgb, .9, "threshold", ret=c("sensitivity","specificity","ppv","npv"))
+```
+
