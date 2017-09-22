@@ -1,0 +1,186 @@
+---
+title: 'Comparing Models: A vs B vs C'
+author: "Christopher Morano"
+date: "September 21, 2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(randomForest)
+library(fastAdaboost)
+library(xgboost)
+library(caret)
+library(lime)
+library(pROC)
+library(printr)
+```
+
+In this document, I will compare the accuracy, sensitivity, specificity, and AUC of a random forest model and an XGBoost model.  
+
+First we need to prepare our data set:
+
+```{r}
+Aug_med <- read_csv('../data/Med_data_Aug21.csv', col_types=list("Day4"=col_character(), 
+                                                                 "Day6"=col_character(),
+                                                                 "Day7"=col_character()))
+#Let's take the first 7 days of medical results:
+Aug_med_day7 <- select(Aug_med, ID:Day7)
+Aug_med_AvsBvsC <- filter(Aug_med_day7, Result2016 %in% c("A", "B", "C"))
+Aug_med_AvsBvsC$Result2016 <- factor(Aug_med_AvsBvsC$Result2016)
+
+#Making the data tall:
+Aug_med_AvsBvsC.tall.7 <- gather(select(Aug_med_AvsBvsC, ID:Day7), day, result, Day1:Day7) %>% 
+  filter(!is.na(result)) %>% 
+  arrange(ID)
+
+head(Aug_med_AvsBvsC.tall.7)
+```
+
+```{r}
+#Replacing non-numeric variables, converting to numeric:
+set.seed(1313)
+Aug_med_AvsBvsC.tall.7$result[Aug_med_AvsBvsC.tall.7$result == '<10'] <- round(runif(10, 1, 9))
+Aug_med_AvsBvsC.tall.7$result[Aug_med_AvsBvsC.tall.7$result == '>30000'] <- '30001'
+Aug_med_AvsBvsC.tall.7$result <- as.numeric(Aug_med_AvsBvsC.tall.7$result)
+
+#Summarizing the results:
+Aug_med_AvsBvsC.sum.7 <- Aug_med_AvsBvsC.tall.7 %>% 
+  group_by(ID) %>% 
+  summarize(num_of_results=n(),
+            min_result=min(result),
+            mean_result=mean(result),
+            max_result=max(result),
+            var_result=var(result),
+            last_result=day[num_of_results],
+            diff_of_last_and_max=ifelse(num_of_results==1, NA, max_result-result[num_of_results]),
+            diff_of_last_and_min=ifelse(num_of_results==1, NA, result[num_of_results]-min_result),
+            Result_2016=factor(names(which.max(table(Result2016)))))
+
+#removing cases with only 1 result:
+Aug_med_AvsBvsC.sum.7.2 <- Aug_med_AvsBvsC.sum.7 %>% 
+  filter(num_of_results > 1)
+
+head(Aug_med_AvsBvsC.sum.7.2)
+```
+
+Because we have such an imbalanced data set, we should balance it before proceeding.  Then we'll shuffle the data and create a training and test set.  
+
+```{r}
+#balancing the data, with 113 data points in each group:
+set.seed(133)
+Aug_med_AvsBvsC.sum.7.2.bal <- sample_frac(
+  rbind(sample_n(filter(Aug_med_AvsBvsC.sum.7.2, Result_2016 == 'A'), 113),
+        sample_n(filter(Aug_med_AvsBvsC.sum.7.2, Result_2016 == 'B'), 113),
+        sample_n(filter(Aug_med_AvsBvsC.sum.7.2, Result_2016 == 'C'), 113)))
+
+set.seed(1316)
+Aug_med_AvsBvsC.sum.7.2.bal <- sample_frac(Aug_med_AvsBvsC.sum.7.2.bal)  #339 rows
+
+Aug_med_AvsBvsC.sum.7.2 %>% 
+  filter(!ID %in% Aug_med_AvsBvsC.sum.7.2.bal$ID)
+
+dim(Aug_med_AvsBvsC.sum.7.2)
+#training and test sets:
+n <- round(nrow(Aug_med_AvsBvsC.sum.7.2.bal))
+Aug_med_AvsBvsC.sum.7.2.train <- Aug_med_AvsBvsC.sum.7.2.bal[1:(n*.75),]
+Aug_med_AvsBvsC.sum.7.2.test <- Aug_med_AvsBvsC.sum.7.2.bal[((n*.75)+1):n,]
+
+#adding the rest of the data to the test set:
+Aug_med_AvsBvsC.sum.7.2.test <- rbind(Aug_med_AvsBvsC.sum.7.2.test,
+                                      Aug_med_AvsBvsC.sum.7.2 %>% 
+                                        filter(!ID %in% Aug_med_AvsBvsC.sum.7.2.bal$ID))
+
+```
+
+Running a Random Forest Model:
+
+```{r}
+(Aug_med.AvsBvsC.rf <- randomForest(Result_2016 ~ max_result +
+             diff_of_last_and_max + diff_of_last_and_min, data=Aug_med_AvsBvsC.sum.7.2.train,
+             xtest=select(Aug_med_AvsBvsC.sum.7.2.test, max_result,
+             diff_of_last_and_max, diff_of_last_and_min), ytest=Aug_med_AvsBvsC.sum.7.2.test$Result_2016,
+             maxnodes = 100, type='prob', importance=TRUE, proximity = TRUE, keep.forest=TRUE,
+             cutoff=c(0.38, 0.38, 0.24), mtry = 3))
+```
+
+```{r}
+Aug_med.AvsBvsC.pred.rf <- predict(Aug_med.AvsBvsC.rf, Aug_med_AvsBvsC.sum.7.2.test, type='prob')
+Aug_med.AvsBvsC.mroc.rf <- roc(ifelse(Aug_med_AvsBvsC.sum.7.2.test$Result_2016 == 'C', 1, 0), 
+                               Aug_med.AvsBvsC.pred.rf[,3], plot=TRUE)
+```
+
+```{r}
+auc(ifelse(Aug_med_AvsBvsC.sum.7.2.test$Result_2016 == 'C', 1, 0), Aug_med.AvsBvsC.pred.rf[,3])
+```
+
+```{r}
+coords(Aug_med.AvsBvsC.mroc.rf, .4, "threshold", ret=c("sensitivity","specificity","ppv","npv"))
+```
+
+And let's try XGBoost:
+
+```{r}
+#selecting the features:
+Aug_med_AvsBvsC.train_X <- Aug_med_AvsBvsC.sum.7.2.train %>% 
+  select(max_result, diff_of_last_and_max, diff_of_last_and_min)
+Aug_med_AvsBvsC.train_y <- Aug_med_AvsBvsC.sum.7.2.train$Result_2016
+
+Aug_med_AvsBvsC.test_X <- Aug_med_AvsBvsC.sum.7.2.test %>% 
+  select(max_result, diff_of_last_and_max, diff_of_last_and_min)
+Aug_med_AvsBvsC.test_y <- Aug_med_AvsBvsC.sum.7.2.test$Result_2016
+
+#converting X's to matrices and y's to 0's & 1's (for 0 and ABC, respectively):
+Aug_med_AvsBvsC.train_X.xgb <- model.matrix(~.-1, data=Aug_med_AvsBvsC.train_X)
+Aug_med_AvsBvsC.test_X.xgb <- model.matrix(~.-1, data=Aug_med_AvsBvsC.test_X)
+
+Aug_med_AvsBvsC.train_y.xgb <- as.numeric(Aug_med_AvsBvsC.train_y) -1
+Aug_med_AvsBvsC.test_y.xgb <- as.numeric(Aug_med_AvsBvsC.test_y) -1
+```
+
+```{r}
+#setting the paramaters:
+param  = list("objective" = "multi:softmax", # multi class classification
+              "num_class" = 3,
+              "eval_metric" = "merror",  	 # evaluation metric 
+              "max_depth" = 2,    		 # maximum depth of tree 
+              "eta" = 0.5,    			 # step size shrinkage 
+              "gamma" = 1,    			 # minimum loss reduction 
+              "subsample" = 0.5,    		 # part of data instances to grow tree 
+              "colsample_bytree" = 1, 		 # subsample ratio of columns when constructing each tree 
+              "min_child_weight" = 2  		 # minimum sum of instance weight needed in a child 
+              )
+```
+
+```{r}
+set.seed(1313)
+Aug_med.AvsBvsC.xgb = xgboost(
+		param=param,
+		data = Aug_med_AvsBvsC.train_X.xgb,
+		label = Aug_med_AvsBvsC.train_y.xgb,
+		nrounds=150)
+
+#The training data:
+Aug_med.AvsBvsC.train.pred.xgb <- predict(Aug_med.AvsBvsC.xgb, Aug_med_AvsBvsC.train_X.xgb)
+confusionMatrix(Aug_med.AvsBvsC.train.pred.xgb, Aug_med_AvsBvsC.train_y.xgb)
+```
+
+```{r}
+Aug_med.AvsBvsC.test.pred.xgb <- predict(Aug_med.AvsBvsC.xgb, Aug_med_AvsBvsC.test_X.xgb)
+confusionMatrix(Aug_med.AvsBvsC.test.pred.xgb, Aug_med_AvsBvsC.test_y.xgb)
+```
+
+```{r}
+Aug_med.AvsBvsC.mroc.xgb <- roc(ifelse(Aug_med_AvsBvsC.sum.7.2.test$Result_2016 == 'C', 1, 0),
+                                ifelse(Aug_med.AvsBvsC.test.pred.xgb == 2, 1, 0), plot=TRUE)
+```
+
+```{r}
+auc(ifelse(Aug_med_AvsBvsC.sum.7.2.test$Result_2016 == 'C', 1, 0),
+    ifelse(Aug_med.AvsBvsC.test.pred.xgb == 2, 1, 0))
+```
+
+```{r}
+coords(Aug_med.AvsBvsC.mroc.xgb, .4, "threshold", ret=c("sensitivity","specificity","ppv","npv"))
+```
