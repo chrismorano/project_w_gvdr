@@ -112,11 +112,11 @@ Aug_med.AvsBvsC.mroc.rf <- roc(ifelse(Aug_med_AvsBvsC.sum.7.2.test$Result_2016 =
 ```
 
 ```{r}
-auc(ifelse(Aug_med_AvsBvsC.sum.7.2.test$Result_2016 == 'C', 1, 0), Aug_med.AvsBvsC.pred.rf[,3])
+(Aug_med.AvsBvsC.rf.auc <- auc(ifelse(Aug_med_AvsBvsC.sum.7.2.test$Result_2016 == 'C', 1, 0), Aug_med.AvsBvsC.pred.rf[,3]))
 ```
 
 ```{r}
-coords(Aug_med.AvsBvsC.mroc.rf, .4, "threshold", ret=c("sensitivity","specificity","ppv","npv"))
+(Aug_med.AvsBvsC.rf.coords <- coords(Aug_med.AvsBvsC.mroc.rf, .4, "threshold", ret=c("sensitivity","specificity","ppv","npv")))
 ```
 
 And let's try XGBoost:
@@ -177,10 +177,28 @@ Aug_med.AvsBvsC.mroc.xgb <- roc(ifelse(Aug_med_AvsBvsC.sum.7.2.test$Result_2016 
 ```
 
 ```{r}
-auc(ifelse(Aug_med_AvsBvsC.sum.7.2.test$Result_2016 == 'C', 1, 0),
-    ifelse(Aug_med.AvsBvsC.test.pred.xgb == 2, 1, 0))
+(Aug_med.AvsBvsC.xgb.auc <- auc(ifelse(Aug_med_AvsBvsC.sum.7.2.test$Result_2016 == 'C', 1, 0),
+    ifelse(Aug_med.AvsBvsC.test.pred.xgb == 2, 1, 0)))
 ```
 
 ```{r}
-coords(Aug_med.AvsBvsC.mroc.xgb, .4, "threshold", ret=c("sensitivity","specificity","ppv","npv"))
+(Aug_med.AvsBvsC.xgb.coords <- coords(Aug_med.AvsBvsC.mroc.xgb, .4, "threshold", ret=c("sensitivity","specificity","ppv","npv")))
 ```
+
+```{r}
+#this was run 3rd:
+model_outputs <- read_csv('../results/model_outputs.csv')
+
+model_outputs.ABC <- tibble(Model=c('A vs B vs C', 'A vs B vs C'),
+                        Algorithm=c('Random Forest', 'XGBoost'),
+                        AUC=c(Aug_med.AvsBvsC.rf.auc[1], Aug_med.AvsBvsC.xgb.auc[1]),
+                        Sensitivity=c(Aug_med.AvsBvsC.rf.coords[[1]], Aug_med.AvsBvsC.xgb.coords[[1]]),
+                        Specificity=c(Aug_med.AvsBvsC.rf.coords[[2]], Aug_med.AvsBvsC.xgb.coords[[2]]), 
+                        Pos_Pred_Value=c(Aug_med.AvsBvsC.rf.coords[[3]], Aug_med.AvsBvsC.xgb.coords[[3]]),
+                        Neg_Pred_Value=c(Aug_med.AvsBvsC.rf.coords[[4]], Aug_med.AvsBvsC.xgb.coords[[4]]))
+
+model_outputs <- rbind(model_outputs, model_outputs.ABC)
+
+write_csv(model_outputs, '../results/model_outputs.csv')
+```
+

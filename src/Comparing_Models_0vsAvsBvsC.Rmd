@@ -119,11 +119,12 @@ Aug_med.0vsAvsBvsC.mroc.rf <- roc(ifelse(Aug_med_0vsAvsBvsC.sum.7.2.test$Result_
 ```
 
 ```{r}
-auc(ifelse(Aug_med_0vsAvsBvsC.sum.7.2.test$Result_2016 == 'C', 1, 0), Aug_med.0vsAvsBvsC.pred.rf[,4])
+(Aug_med.0vsAvsBvsC.rf.auc <- auc(ifelse(Aug_med_0vsAvsBvsC.sum.7.2.test$Result_2016 == 'C', 1, 0),
+                                 Aug_med.0vsAvsBvsC.pred.rf[,4]))
 ```
 
 ```{r}
-coords(Aug_med.0vsAvsBvsC.mroc.rf, .4, "threshold", ret=c("sensitivity","specificity","ppv","npv"))
+(Aug_med.0vsAvsBvsC.rf.coords <- coords(Aug_med.0vsAvsBvsC.mroc.rf, .5, "threshold", ret=c("sensitivity","specificity","ppv","npv")))
 ```
 
 And let's try XGBoost:
@@ -186,10 +187,29 @@ Aug_med.0vsAvsBvsC.mroc.xgb <- roc(ifelse(Aug_med_0vsAvsBvsC.sum.7.2.test$Result
 ```
 
 ```{r}
-auc(ifelse(Aug_med_0vsAvsBvsC.sum.7.2.test$Result_2016 == 'C', 1, 0),
-    ifelse(Aug_med.0vsAvsBvsC.test.pred.xgb == 3, 1, 0))
+(Aug_med.0vsAvsBvsC.xgb.auc <- auc(ifelse(Aug_med_0vsAvsBvsC.sum.7.2.test$Result_2016 == 'C', 1, 0),
+    ifelse(Aug_med.0vsAvsBvsC.test.pred.xgb == 3, 1, 0)))
 ```
 
 ```{r}
-coords(Aug_med.0vsAvsBvsC.mroc.xgb, .4, "threshold", ret=c("sensitivity","specificity","ppv","npv"))
+(Aug_med.0vsAvsBvsC.xgb.coords <- coords(Aug_med.0vsAvsBvsC.mroc.xgb, .5, "threshold", ret=c( "sensitivity","specificity","ppv","npv")))
+
+Aug_med.0vsAvsBvsC.rf.auc[1]
+#Aug_med.0vsAvsBvsC.xgb.coords[[1]]#
+```
+
+Outputting the results to a csv:
+
+```{r}
+#this was run 1st.  Then the results from the other models were added to it:
+
+model_outputs.0ABC <- tibble(Model=c('0 vs A vs B vs C', '0 vs A vs B vs C'),
+                        Algorithm=c('Random Forest', 'XGBoost'),
+                        AUC=c(Aug_med.0vsAvsBvsC.rf.auc[1], Aug_med.0vsAvsBvsC.xgb.auc[1]),
+                        Sensitivity=c(Aug_med.0vsAvsBvsC.rf.coords[[1]], Aug_med.0vsAvsBvsC.xgb.coords[[1]]),
+                        Specificity=c(Aug_med.0vsAvsBvsC.rf.coords[[2]], Aug_med.0vsAvsBvsC.xgb.coords[[2]]), 
+                        Pos_Pred_Value=c(Aug_med.0vsAvsBvsC.rf.coords[[3]], Aug_med.0vsAvsBvsC.xgb.coords[[3]]),
+                        Neg_Pred_Value=c(Aug_med.0vsAvsBvsC.rf.coords[[4]], Aug_med.0vsAvsBvsC.xgb.coords[[4]]))
+
+write_csv(model_outputs.0ABC, '../results/model_outputs.csv')
 ```

@@ -97,11 +97,11 @@ Aug_med.AvsBC.mroc.rf <- roc(ifelse(Aug_med_AvsBC.sum.7.2.test$Result_2016 == "B
 ```
 
 ```{r}
-auc(ifelse(Aug_med_AvsBC.sum.7.2.test$Result_2016 == "BC", 1, 0), (as.numeric(Aug_med.AvsBC.pred.rf)-1))
+(Aug_med.AvsBC.rf.auc <- auc(ifelse(Aug_med_AvsBC.sum.7.2.test$Result_2016 == "BC", 1, 0), (as.numeric(Aug_med.AvsBC.pred.rf)-1)))
 ```
 
 ```{r}
-coords(Aug_med.AvsBC.mroc.rf, .9, "threshold", ret=c("sensitivity","specificity","ppv","npv"))
+(Aug_med.AvsBC.rf.coords <- coords(Aug_med.AvsBC.mroc.rf, .9, "threshold", ret=c("sensitivity","specificity","ppv","npv")))
 ```
 
 Let's try the same with Adaboost:
@@ -121,12 +121,12 @@ Aug_med.AvsBC.mroc.ada <- roc(as.numeric(Aug_med_AvsBC.sum.7.2.test$Result_2016)
 ```
 
 ```{r}
-auc(ordered(Aug_med_AvsBC.sum.7.2.test$Result_2016),
-                               ordered(Aug_med.AvsBC.pred.ada$class))
+(Aug_med.AvsBC.ada.auc <- auc(ordered(Aug_med_AvsBC.sum.7.2.test$Result_2016),
+                               ordered(Aug_med.AvsBC.pred.ada$class)))
 ```
 
 ```{r}
-coords(Aug_med.AvsBC.mroc.ada, .9, "threshold", ret=c("sensitivity","specificity","ppv","npv"))
+(Aug_med.AvsBC.ada.coords <- coords(Aug_med.AvsBC.mroc.ada, .9, "threshold", ret=c("sensitivity","specificity","ppv","npv")))
 ```
 
 And finally, let's try XGBoost:
@@ -180,11 +180,33 @@ Aug_med.AvsBC.mroc.xgb <- roc(Aug_med_AvsBC.test_y.xgb,
 ```
 
 ```{r}
-auc(Aug_med_AvsBC.test_y.xgb,
-    round(Aug_med.AvsBC.pred.xgb))
+(Aug_med.AvsBC.xgb.auc <- auc(Aug_med_AvsBC.test_y.xgb,
+    round(Aug_med.AvsBC.pred.xgb)))
 ```
 
 ```{r}
-coords(Aug_med.AvsBC.mroc.xgb, .9, "threshold", ret=c("sensitivity","specificity","ppv","npv"))
+(Aug_med.AvsBC.xgb.coords <- coords(Aug_med.AvsBC.mroc.xgb, .9, "threshold", ret=c("sensitivity","specificity","ppv","npv")))
 ```
+
+```{r}
+#this was run 5th:
+model_outputs <- read_csv('../results/model_outputs.csv')
+
+model_outputs.AvsBC <- tibble(Model=rep('A vs BC', 3),
+                        Algorithm=c('Random Forest', 'Adaboost', 'XGBoost'),
+                        AUC=c(Aug_med.AvsBC.rf.auc[1], Aug_med.AvsBC.ada.auc[1], Aug_med.AvsBC.xgb.auc[1]),
+                        Sensitivity=c(Aug_med.AvsBC.rf.coords[[1]], Aug_med.AvsBC.ada.coords[[1]],
+                                      Aug_med.AvsBC.xgb.coords[[1]]),
+                        Specificity=c(Aug_med.AvsBC.rf.coords[[2]], Aug_med.AvsBC.ada.coords[[2]],
+                                      Aug_med.AvsBC.xgb.coords[[2]]), 
+                        Pos_Pred_Value=c(Aug_med.AvsBC.rf.coords[[3]], Aug_med.AvsBC.ada.coords[[3]],
+                                      Aug_med.AvsBC.xgb.coords[[3]]),
+                        Neg_Pred_Value=c(Aug_med.AvsBC.rf.coords[[4]], Aug_med.AvsBC.ada.coords[[4]],
+                                      Aug_med.AvsBC.xgb.coords[[4]]))
+
+model_outputs <- rbind(model_outputs, model_outputs.AvsBC)
+
+write_csv(model_outputs, '../results/model_outputs.csv')
+```
+
 
