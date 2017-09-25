@@ -78,10 +78,10 @@ Aug_med_AvsBvsC.sum.7.2.bal <- sample_frac(
 set.seed(1316)
 Aug_med_AvsBvsC.sum.7.2.bal <- sample_frac(Aug_med_AvsBvsC.sum.7.2.bal)  #339 rows
 
-Aug_med_AvsBvsC.sum.7.2 %>% 
-  filter(!ID %in% Aug_med_AvsBvsC.sum.7.2.bal$ID)
+#Aug_med_AvsBvsC.sum.7.2 %>% 
+#  filter(!ID %in% Aug_med_AvsBvsC.sum.7.2.bal$ID)
 
-dim(Aug_med_AvsBvsC.sum.7.2)
+#dim(Aug_med_AvsBvsC.sum.7.2)
 #training and test sets:
 n <- round(nrow(Aug_med_AvsBvsC.sum.7.2.bal))
 Aug_med_AvsBvsC.sum.7.2.train <- Aug_med_AvsBvsC.sum.7.2.bal[1:(n*.75),]
