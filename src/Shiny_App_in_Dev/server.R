@@ -105,7 +105,7 @@ shinyServer(function(input, output, session) {
       model_data <- as.tibble(predict(data.0vsABC.rf, input_data(), type='prob'))
       model_data <- gather(model_data, class, prob)
       
-      model_data$class <- as.factor(model_data$class)
+      model_data$class <- factor(model_data$class, levels = c('O', 'ABC'))
       model_data$prob <- as.numeric(model_data$prob)
     }
     
@@ -117,8 +117,7 @@ shinyServer(function(input, output, session) {
   output$model1_plot <- renderPlot({
      ggplot(post_model1_data(), aes(x=class, y=prob, fill=class)) +
        geom_col() +
-       scale_x_discrete(limits=c('O', 'ABC')) +
-       scale_fill_manual(values=c('red3', 'green3')) +
+       scale_fill_manual(values=c('green3', 'red3')) +
        labs(title='Probability of the Patient Having the Result 0 or ABC:')
      
   })
@@ -143,7 +142,7 @@ shinyServer(function(input, output, session) {
       model_data <- as.tibble(predict(data.0AvsBC.rf, input_data(), type='prob'))
       model_data <- gather(model_data, class, prob)
       
-      model_data$class <- as.factor(model_data$class)
+      model_data$class <- factor(model_data$class, levels = c('OA', 'BC'))
       model_data$prob <- as.numeric(model_data$prob)
     }
     
@@ -151,12 +150,12 @@ shinyServer(function(input, output, session) {
     
   })
   
-  #the plot for model 1:
+  #the plot for model 2:
   output$model2_plot <- renderPlot({
     ggplot(post_model2_data(), aes(x=class, y=prob, fill=class)) +
       geom_col() +
-      scale_x_discrete(limits=c('OA', 'BC')) +
-      scale_fill_manual(values=c('red3', 'green3')) + 
+#      scale_x_discrete( +
+      scale_fill_manual(values=c('green3', 'red3')) + 
       labs(title='Probability of the Patient Having the Result 0A or BC:')
     
   })
@@ -167,7 +166,7 @@ shinyServer(function(input, output, session) {
                   explainer.0AvsBC, n_labels=2, n_features=3)
   })
   
-  #plotting lime results for model 1:
+  #plotting lime results for model 2:
   output$lime_plot2 <- renderPlot({
     windowsFonts(Times=windowsFont("TT Times New Roman"))
     plot_features(data.0AvsBC.explanation())
@@ -190,7 +189,7 @@ shinyServer(function(input, output, session) {
     
   })
   
-  #the plot for model 2:
+  #the plot for model 3:
   output$model3_plot <- renderPlot({
     ggplot(post_model3_data(), aes(x=class, y=prob, fill=class)) +
       geom_col() +
@@ -199,13 +198,13 @@ shinyServer(function(input, output, session) {
     
   })
   
-  #getting the lime explanation for model 2:
+  #getting the lime explanation for model 3:
   data.ABC.explanation <- reactive({
     lime::explain(select(input_data(), max_result, diff_of_last_and_max, diff_of_last_and_min), 
                   explainer.ABC, n_labels=3, n_features=3)
   })
   
-  #plotting lime results for model 2:
+  #plotting lime results for model 3:
   output$lime_plot3 <- renderPlot({
     windowsFonts(Times=windowsFont("TT Times New Roman"))
     plot_features(data.ABC.explanation())
