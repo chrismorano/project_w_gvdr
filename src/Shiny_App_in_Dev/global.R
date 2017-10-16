@@ -51,7 +51,7 @@ data.0vsABC.rf <- caret::train(Result_2016 ~ max_result + diff_of_last_and_max +
 #lime explanation for 0 vs ABC:
 explainer.0vsABC <- lime(data.0vsABC.train, data.0vsABC.rf, bin_continuous = FALSE, n_permutations = 100)
 
-explanation.0vsABC <- lime::explain(data.0vsABC.train[2,], explainer.0vsABC, n_labels=2, n_features=3)
+#explanation.0vsABC <- lime::explain(data.0vsABC.train[2,], explainer.0vsABC, n_labels=2, n_features=3)
 
 #getting the metrics:
 data.0vsABC.mroc <- roc(ifelse(data.0vsABC.test$Result_2016 == "O", 0, 1),
@@ -98,7 +98,7 @@ data.0AvsBC.rf <- caret::train(Result_2016 ~ max_result + diff_of_last_and_max +
 #the lime explanation:
 explainer.0AvsBC <- lime(data.0AvsBC.train, data.0AvsBC.rf, bin_continuous = FALSE, n_permutations = 100)
 
-explanation.0AvsBC <- lime::explain(data.0AvsBC.train[2,], explainer.0AvsBC, n_labels=2, n_features=3)
+#explanation.0AvsBC <- lime::explain(data.0AvsBC.train[2,], explainer.0AvsBC, n_labels=2, n_features=3)
 
 #getting the metrics:
 data.0AvsBC.mroc <- roc(ifelse(data.0AvsBC.test$Result_2016 == "OA", 0, 1),
@@ -145,7 +145,7 @@ data.ABC.rf <- caret::train(Result_2016 ~ max_result + diff_of_last_and_max + di
 #the lime explanation:
 explainer.ABC <- lime(data.ABC.train, data.ABC.rf, bin_continuous = FALSE, n_permutations = 100)
 
-explanation.ABC <- lime::explain(data.ABC.train[3,], explainer.ABC, n_labels=3, n_features=3)
+#explanation.ABC <- lime::explain(data.ABC.train[3,], explainer.ABC, n_labels=3, n_features=3)
 
 
 #getting the metrics:

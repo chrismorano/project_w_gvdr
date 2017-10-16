@@ -100,7 +100,7 @@ shinyServer(function(input, output, session) {
   #running the model 0 vs ABC and getting the probabilities:
   post_model1_data <- reactive({
     if (is.na(input_data()$num_of_results)){
-      model_data <- tibble(class = c('0', 'ABC'), prob = c(0, 0))
+      model_data <- tibble(class = c('O', 'ABC'), prob = c(0, 0))
     } else {
       model_data <- as.tibble(predict(data.0vsABC.rf, input_data(), type='prob'))
       model_data <- gather(model_data, class, prob)
@@ -130,14 +130,14 @@ shinyServer(function(input, output, session) {
   
   #plotting lime results for model 1:
   output$lime_plot1 <- renderPlot({
-    windowsFonts(Times=windowsFont("TT Times New Roman"))
+#    windowsFonts(Times=windowsFont("TT Times New Roman"))
     plot_features(data.0vsABC.explanation())
   })
   
   #running the model 0A vs BC and getting the probabilities:
   post_model2_data <- reactive({
     if (is.na(input_data()$num_of_results)){
-      model_data <- tibble(class = c('0', 'ABC'), prob = c(0, 0))
+      model_data <- tibble(class = c('OA', 'BC'), prob = c(0, 0))
     } else {
       model_data <- as.tibble(predict(data.0AvsBC.rf, input_data(), type='prob'))
       model_data <- gather(model_data, class, prob)
@@ -154,7 +154,6 @@ shinyServer(function(input, output, session) {
   output$model2_plot <- renderPlot({
     ggplot(post_model2_data(), aes(x=class, y=prob, fill=class)) +
       geom_col() +
-#      scale_x_discrete( +
       scale_fill_manual(values=c('green3', 'red3')) + 
       labs(title='Probability of the Patient Having the Result 0A or BC:')
     
@@ -168,11 +167,11 @@ shinyServer(function(input, output, session) {
   
   #plotting lime results for model 2:
   output$lime_plot2 <- renderPlot({
-    windowsFonts(Times=windowsFont("TT Times New Roman"))
+#    windowsFonts(Times=windowsFont("TT Times New Roman"))
     plot_features(data.0AvsBC.explanation())
   })
   
-  
+  ?windowsFont
   #running the model A vs B vs C and getting the probabilities:
   post_model3_data <- reactive({
     if (is.na(input_data()$num_of_results)){
@@ -206,7 +205,7 @@ shinyServer(function(input, output, session) {
   
   #plotting lime results for model 3:
   output$lime_plot3 <- renderPlot({
-    windowsFonts(Times=windowsFont("TT Times New Roman"))
+#    windowsFonts(Times=windowsFont("TT Times New Roman"))
     plot_features(data.ABC.explanation())
   })
   
